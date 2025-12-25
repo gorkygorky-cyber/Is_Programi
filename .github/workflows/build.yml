@@ -10,10 +10,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4  # v3 -> v4 yaptık
+    - uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v5 # v4 -> v5 yaptık
+      uses: actions/setup-python@v5
       with:
         python-version: '3.9'
 
@@ -22,13 +22,21 @@ jobs:
         python -m pip install --upgrade pip
         pip install PyQt6 PyQt6-WebEngine pandas plotly pyinstaller openpyxl
 
-    - name: Build EXE
+    - name: Dosya Kontrolü ve Derleme
       run: |
-        pyinstaller --noconsole --onefile --name="ProjePaneli" desktop_app.py
+        echo "Klasördeki dosyalar:"
+        dir
+        echo "--------------------------------"
+        # Klasördeki ilk .py dosyasını bulup adını alıyoruz
+        $pyFile = Get-ChildItem *.py | Select-Object -First 1 -ExpandProperty Name
+        echo "Bulunan Python dosyası: $pyFile"
+        
+        # O dosyayı derliyoruz
+        pyinstaller --noconsole --onefile --name="ProjePaneli" $pyFile
 
     - name: Upload Artifact
-      uses: actions/upload-artifact@v4  # Hata veren kısım burasıydı (v3 -> v4)
+      uses: actions/upload-artifact@v4
       with:
         name: ProjePaneli-Windows
         path: dist/ProjePaneli.exe
-        compression-level: 0 # İşlemi hızlandırmak için sıkıştırmayı kapatıyoruz (GitHub zaten zip olarak indirtecek)
+        compression-level: 0
