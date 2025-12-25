@@ -9,9 +9,8 @@ from datetime import datetime, timedelta
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, 
                              QPushButton, QFileDialog, QLabel, QTabWidget, QMessageBox, 
-                             QGridLayout, QFrame, QTextEdit, QHBoxLayout, QScrollArea)
+                             QTextEdit, QHBoxLayout, QFrame)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtCore import Qt
 
 # --- YARDIMCI FONKSİYONLAR ---
 def parse_turkish_date(date_str):
@@ -40,7 +39,7 @@ def clean_duration(val):
             return 0.0
     return val
 
-# --- STİL KARTLARI (KPI KUTULARI İÇİN) ---
+# --- STİL KARTLARI ---
 class KPICard(QFrame):
     def __init__(self, title, value, color="#0078D7"):
         super().__init__()
@@ -48,18 +47,20 @@ class KPICard(QFrame):
         self.setStyleSheet(f"""
             QFrame {{
                 background-color: white;
-                border-radius: 10px;
-                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                border: 1px solid #ddd;
+                padding: 10px;
             }}
         """)
         layout = QVBoxLayout()
+        layout.setContentsMargins(5,5,5,5)
         
         lbl_title = QLabel(title)
-        lbl_title.setStyleSheet("color: #666; font-size: 14px; border: none;")
+        lbl_title.setStyleSheet("color: #555; font-size: 13px; border: none;")
         layout.addWidget(lbl_title)
         
         lbl_value = QLabel(value)
-        lbl_value.setStyleSheet(f"color: {color}; font-size: 24px; font-weight: bold; border: none;")
+        lbl_value.setStyleSheet(f"color: {color}; font-size: 22px; font-weight: bold; border: none;")
         layout.addWidget(lbl_value)
         
         self.setLayout(layout)
@@ -69,29 +70,28 @@ class ProjectApp(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("Proje Yönetim Paneli - Dashboard v2.0")
+        self.setWindowTitle("Proje Yönetim Paneli - Dashboard v3.0")
         self.setGeometry(100, 100, 1400, 900)
-        self.setStyleSheet("background-color: #f5f7fa;")
+        self.setStyleSheet("background-color: #f4f6f9; font-family: Segoe UI, sans-serif;")
 
-        # Ana Widget
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         self.main_layout = QVBoxLayout()
         main_widget.setLayout(self.main_layout)
 
-        # Üst Bar (Dosya Yükleme)
+        # Üst Bar
         top_bar = QHBoxLayout()
         self.status_label = QLabel("Lütfen Veri Yükleyin")
-        self.status_label.setStyleSheet("font-size: 14px; color: #333;")
+        self.status_label.setStyleSheet("font-size: 14px; color: #333; font-weight: bold;")
         
         btn_load = QPushButton("📂 Proje Dosyası Yükle")
         btn_load.clicked.connect(self.load_file)
         btn_load.setStyleSheet("""
             QPushButton {
-                background-color: #2c3e50; color: white; padding: 8px 15px; 
-                border-radius: 5px; font-weight: bold;
+                background-color: #0078D7; color: white; padding: 8px 15px; 
+                border-radius: 5px; font-weight: bold; border: none;
             }
-            QPushButton:hover { background-color: #34495e; }
+            QPushButton:hover { background-color: #0063b1; }
         """)
         
         top_bar.addWidget(self.status_label)
@@ -103,12 +103,11 @@ class ProjectApp(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet("""
             QTabWidget::pane { border: 1px solid #ccc; background: white; }
-            QTabBar::tab { background: #e0e0e0; padding: 10px; margin-right: 2px; }
-            QTabBar::tab:selected { background: #fff; border-bottom: 2px solid #0078D7; font-weight: bold; }
+            QTabBar::tab { background: #e0e0e0; padding: 8px 15px; margin-right: 2px; border-top-left-radius: 4px; border-top-right-radius: 4px;}
+            QTabBar::tab:selected { background: #fff; border-bottom: 2px solid #0078D7; font-weight: bold; color: #0078D7; }
         """)
         self.main_layout.addWidget(self.tabs)
 
-        # Sekme İçeriklerini Hazırla (Boş Olarak)
         self.setup_dashboard_tab()
         self.setup_summary_gantt_tab()
         self.setup_timeline_tab()
@@ -119,34 +118,39 @@ class ProjectApp(QMainWindow):
         self.dash_layout = QVBoxLayout()
         self.dash_tab.setLayout(self.dash_layout)
         
-        # KPI Alanı (Dinamik eklenecek)
         self.kpi_layout = QHBoxLayout()
         self.dash_layout.addLayout(self.kpi_layout)
         
-        # Grafik Alanı
         self.dash_webview = QWebEngineView()
         self.dash_layout.addWidget(self.dash_webview)
-        
-        self.tabs.addTab(self.dash_tab, "🚀 Dashboard")
+        self.tabs.addTab(self.dash_tab, "🚀 Yönetici Özeti")
 
     def setup_summary_gantt_tab(self):
         self.gantt_view = QWebEngineView()
-        self.tabs.addTab(self.gantt_view, "📅 Kritik Özet Gantt")
+        self.tabs.addTab(self.gantt_view, "📅 Kritik Hat (Gantt)")
 
     def setup_timeline_tab(self):
         self.timeline_view = QWebEngineView()
-        self.tabs.addTab(self.timeline_view, "⏳ Kritik Timeline")
+        self.tabs.addTab(self.timeline_view, "⏳ Kritik Zaman Çizelgesi")
 
     def setup_insights_tab(self):
         self.insights_text = QTextEdit()
         self.insights_text.setReadOnly(True)
-        self.insights_text.setStyleSheet("font-size: 16px; padding: 20px; line-height: 1.5;")
-        self.tabs.addTab(self.insights_text, "🤖 Otomatik Analiz & Notlar")
+        # Siyah metin, beyaz arka plan zorlaması
+        self.insights_text.setStyleSheet("""
+            QTextEdit {
+                background-color: white; 
+                color: black; 
+                font-size: 15px; 
+                padding: 15px;
+                border: none;
+            }
+        """)
+        self.tabs.addTab(self.insights_text, "🤖 Akıllı Proje Analizi & Notlar")
 
     def load_file(self):
         file_filter = "Data Files (*.csv *.xlsx);; CSV (*.csv);; Excel (*.xlsx)"
         file_path, _ = QFileDialog.getOpenFileName(self, "Proje Dosyasını Seç", "", file_filter)
-
         if file_path:
             try:
                 self.process_data(file_path)
@@ -154,40 +158,36 @@ class ProjectApp(QMainWindow):
                 QMessageBox.critical(self, "Hata", f"Veri işlenirken hata oluştu:\n{str(e)}")
 
     def process_data(self, file_path):
-        # 1. Veri Okuma
         if file_path.endswith('.csv'):
             df = pd.read_csv(file_path)
         else:
             df = pd.read_excel(file_path)
 
-        # 2. Veri Temizleme
         if 'Başlangıç' not in df.columns:
             QMessageBox.warning(self, "Uyarı", "'Başlangıç' sütunu bulunamadı!")
             return
 
+        # Veri Hazırlığı
         df['Başlangıç_Date'] = df['Başlangıç'].apply(parse_turkish_date)
         df['Bitiş_Date'] = df['Bitiş'].apply(parse_turkish_date)
         df['Süre_Num'] = df['Süre'].apply(clean_duration)
         df['Bolluk_Num'] = df['Toplam_Bolluk'].apply(clean_duration)
-        df['Kritik'] = df['Bolluk_Num'] <= 0
-        df['Durum'] = df.apply(lambda x: 'Kritik' if x['Kritik'] else 'Normal', axis=1)
+        
+        # --- KRİTİK YOL MANTIĞI GÜNCELLEMESİ ---
+        # 1. Bolluk <= 0 OLMALI
+        # 2. Tamamlanma Yüzdesi < %100 OLMALI (Bitmiş iş kritik değildir)
+        df['Kritik'] = (df['Bolluk_Num'] <= 0) & (df['Tamamlanma_Yüzdesi'] < 1.0)
+        
+        df['Durum'] = df.apply(lambda x: 'Kritik' if x['Kritik'] else ('Tamamlandı' if x['Tamamlanma_Yüzdesi'] == 1.0 else 'Normal'), axis=1)
 
         self.status_label.setText(f"Aktif Dosya: {os.path.basename(file_path)}")
         
-        # --- SEKME 1: DASHBOARD OLUŞTURMA ---
         self.create_dashboard(df)
-        
-        # --- SEKME 2: KRİTİK ÖZET GANTT ---
         self.create_summary_gantt(df)
-        
-        # --- SEKME 3: TİMELINE ---
         self.create_timeline(df)
-        
-        # --- SEKME 4: NOTLAR ---
         self.generate_insights(df)
 
     def create_dashboard(self, df):
-        # A. KPI Hesaplamaları
         today = pd.Timestamp.now()
         start_date = df['Başlangıç_Date'].min()
         finish_date = df['Bitiş_Date'].max()
@@ -195,205 +195,210 @@ class ProjectApp(QMainWindow):
         total_days = (finish_date - start_date).days
         elapsed_days = (today - start_date).days
         remaining_days = (finish_date - today).days
-        
         if elapsed_days < 0: elapsed_days = 0
         if remaining_days < 0: remaining_days = 0
         
-        # Ortalama tamamlanma yüzdesi
-        avg_progress = df['Tamamlanma_Yüzdesi'].mean() * 100
-        
-        # Süresel ilerleme yüzdesi
+        # --- İLERLEME YÜZDESİ HESABI ---
+        # Önce ID=1 olan ana özeti arayalım
+        project_summary = df[df['Benzersiz_Kimlik'] == 1]
+        if not project_summary.empty:
+            avg_progress = project_summary.iloc[0]['Tamamlanma_Yüzdesi'] * 100
+        else:
+            # Bulamazsa ortalama al
+            avg_progress = df['Tamamlanma_Yüzdesi'].mean() * 100
+
         time_progress = 0
         if total_days > 0:
             time_progress = (elapsed_days / total_days) * 100
             if time_progress > 100: time_progress = 100
 
-        # KPI Widgetlarını Temizle ve Ekle
+        # KPI Kartlarını Temizle ve Ekle
         for i in reversed(range(self.kpi_layout.count())): 
             self.kpi_layout.itemAt(i).widget().setParent(None)
 
-        self.kpi_layout.addWidget(KPICard("Toplam Süre", f"{total_days} Gün"))
+        self.kpi_layout.addWidget(KPICard("Toplam Proje Süresi", f"{total_days} Gün"))
         self.kpi_layout.addWidget(KPICard("Geçen Süre", f"{elapsed_days} Gün", "#FF9800"))
         self.kpi_layout.addWidget(KPICard("Kalan Süre", f"{remaining_days} Gün", "#4CAF50"))
-        self.kpi_layout.addWidget(KPICard("Fiziksel İlerleme", f"%{avg_progress:.1f}", "#9C27B0"))
-        self.kpi_layout.addWidget(KPICard("Süresel İlerleme", f"%{time_progress:.1f}", "#E91E63"))
+        self.kpi_layout.addWidget(KPICard("Gerçekleşen İlerleme", f"%{avg_progress:.1f}", "#9C27B0"))
+        self.kpi_layout.addWidget(KPICard("Planlanan (Süresel)", f"%{time_progress:.1f}", "#E91E63"))
 
-        # B. Dashboard Grafikleri (Subplots ile Birleşik Görünüm)
+        # Grafikler
         fig = make_subplots(
             rows=2, cols=2,
-            column_widths=[0.4, 0.6],
+            column_widths=[0.35, 0.65],
             row_heights=[0.5, 0.5],
             specs=[[{"type": "indicator"}, {"type": "table", "rowspan": 2}],
-                   [{"type": "domain"},     None]], # 2. sütun tablo olduğu için birleştirildi
-            subplot_titles=("İlerleme Durumu (Gauge)", "Kritik Aktivite Takip Listesi", "Aktivite Durum Dağılımı")
+                   [{"type": "domain"},     None]],
+            subplot_titles=("İlerleme Hedef Karşılaştırması", "Kritik Aktivite Takip Listesi", "Aktivite Durum Dağılımı")
         )
 
-        # 1. Gauge Chart (Hız Göstergesi)
+        # Gauge Chart
         fig.add_trace(go.Indicator(
-            mode = "gauge+number",
+            mode = "gauge+number+delta",
             value = avg_progress,
-            title = {'text': "Genel İlerleme %"},
+            delta = {'reference': time_progress, 'relative': False, "valueformat": ".1f"},
+            title = {'text': "Fiziksel İlerleme %"},
             gauge = {
                 'axis': {'range': [None, 100]},
                 'bar': {'color': "#0078D7"},
-                'steps': [
-                    {'range': [0, 50], 'color': "lightgray"},
-                    {'range': [50, 85], 'color': "gray"}],
+                'steps': [{'range': [0, time_progress], 'color': "rgba(255, 0, 0, 0.1)"}], # Kırmızı alan hedeftir
                 'threshold': {
                     'line': {'color': "red", 'width': 4},
                     'thickness': 0.75,
-                    'value': time_progress} # Hedef çizgi (Süresel ilerleme)
+                    'value': time_progress}
             }
         ), row=1, col=1)
 
-        # 2. Pie Chart (Kritik vs Normal)
-        crit_counts = df['Durum'].value_counts()
+        # Pie Chart
+        status_counts = df['Durum'].value_counts()
+        colors_map = {'Kritik': '#FF4B4B', 'Normal': '#1C83E1', 'Tamamlandı': '#2ECC71'}
         fig.add_trace(go.Pie(
-            labels=crit_counts.index, 
-            values=crit_counts.values,
+            labels=status_counts.index, 
+            values=status_counts.values,
             hole=.4,
-            marker_colors=["#FF4B4B", "#1C83E1"]
+            marker_colors=[colors_map.get(x, '#999') for x in status_counts.index]
         ), row=2, col=1)
 
-        # 3. Tabloları Hazırla
-        # Tablo 1: Şu an Devam Eden Kritikler (Start <= Today <= Finish)
-        current_crit = df[
-            (df['Kritik'] == True) & 
-            (df['Başlangıç_Date'] <= today) & 
-            (df['Bitiş_Date'] >= today)
-        ].head(8)
-
-        # Tablo 2: Gelecek Hafta Kritikler (Start <= Today+7) ve Henüz Bitmemiş
-        next_week = today + timedelta(days=7)
-        future_crit = df[
-            (df['Kritik'] == True) & 
-            (df['Başlangıç_Date'] <= next_week) & 
-            (df['Bitiş_Date'] >= today)
-        ].head(8)
-
-        # Tablo verilerini birleştirip HTML formatında gösterelim
-        # Plotly table yerine daha temiz bir HTML tablo stringi oluşturmak daha esnek olabilir
-        # Ancak subplot içinde table kullanmak istedik.
+        # Tablolar
+        active_crit = df[df['Kritik'] == True].sort_values(by='Başlangıç_Date')
         
-        # İki tabloyu alt alta birleştirip tek tabloda gösterelim (Tip sütunu ekleyerek)
-        current_crit['Liste_Tipi'] = "🔴 ŞU AN AKTİF"
-        future_crit['Liste_Tipi'] = "📅 GELECEK HAFTA"
+        # Şu an aktif veya geçmişte başlamış ama bitmemiş kritik işler
+        urgent_crit = active_crit[active_crit['Başlangıç_Date'] <= today].head(8)
         
-        combined_table = pd.concat([current_crit, future_crit])
+        # Gelecek kritik işler
+        future_crit = active_crit[active_crit['Başlangıç_Date'] > today].head(8)
+
+        urgent_crit['Öncelik'] = "🔴 ACİL / DEVAM"
+        future_crit['Öncelik'] = "📅 GELECEK"
+        
+        combined_table = pd.concat([urgent_crit, future_crit])
         
         if combined_table.empty:
-            table_header = ["Bilgi"]
-            table_cells = [["Kritik aktivite bulunamadı"]]
+            header = ["Bilgi"]
+            cells = [["Aktif kritik iş bulunamadı."]]
         else:
-            table_header = ["Durum", "Aktivite Adı", "Bitiş", "% Tam."]
-            table_cells = [
-                combined_table['Liste_Tipi'],
-                combined_table['Ad'].str.slice(0, 30), # İsimleri kısalt
-                combined_table['Bitiş_Date'].dt.strftime('%d-%m-%Y'),
+            header = ["Durum", "Aktivite Adı", "Başlangıç", "Bitiş", "%"]
+            cells = [
+                combined_table['Öncelik'],
+                combined_table['Ad'].str.slice(0, 35),
+                combined_table['Başlangıç_Date'].dt.strftime('%d-%m'),
+                combined_table['Bitiş_Date'].dt.strftime('%d-%m'),
                 (combined_table['Tamamlanma_Yüzdesi']*100).map('{:.0f}%'.format)
             ]
 
         fig.add_trace(go.Table(
-            header=dict(values=table_header, fill_color='#2c3e50', font=dict(color='white', size=12)),
-            cells=dict(values=table_cells, fill_color='#ecf0f1', font=dict(color='black', size=11), height=30)
+            header=dict(values=header, fill_color='#2c3e50', font=dict(color='white', size=11)),
+            cells=dict(values=cells, fill_color=['#ecf0f1']*len(combined_table), font=dict(color='black', size=11), height=28)
         ), row=1, col=2)
 
-        fig.update_layout(height=650, margin=dict(l=10, r=10, t=40, b=10))
+        fig.update_layout(height=650, margin=dict(l=10, r=10, t=40, b=10), font=dict(family="Segoe UI"))
         self.dash_webview.setHtml(fig.to_html(include_plotlyjs='cdn'))
 
     def create_summary_gantt(self, df):
-        # Sadece Özet (Summary) VE İçinde Kritik iş olanları (Genelde MS Project özeti de kritik işaretler)
-        # Özet sütunu 'Evet' olanlar ve Kritik olanlar
+        # Sadece Kritik olan ve Özet olanlar
         summary_crit = df[(df['Özet'] == 'Evet') & (df['Kritik'] == True)].copy()
         
         if summary_crit.empty:
-            self.gantt_view.setHtml("<h3>Görüntülenecek Kritik Özet Aktivite Bulunamadı.</h3>")
+            self.gantt_view.setHtml("<h3 style='font-family:Segoe UI; padding:20px'>Şu an kritik hat üzerinde aktif bir Özet Aktivite bulunmamaktadır.</h3>")
             return
 
         fig = px.timeline(
-            summary_crit, 
-            x_start="Başlangıç_Date", 
-            x_end="Bitiş_Date", 
-            y="Ad",
-            color="Tamamlanma_Yüzdesi",
-            title="Kritik Özet Aktiviteler Gantt Şeması",
-            color_continuous_scale="RdBu"
+            summary_crit, x_start="Başlangıç_Date", x_end="Bitiş_Date", y="Ad",
+            color="Tamamlanma_Yüzdesi", title="Kritik Özet Aktiviteler",
+            color_continuous_scale="Reds"
         )
         fig.update_yaxes(autorange="reversed")
-        fig.update_layout(height=700)
+        fig.update_layout(height=700, font=dict(family="Segoe UI"))
         self.gantt_view.setHtml(fig.to_html(include_plotlyjs='cdn'))
 
     def create_timeline(self, df):
         summary_crit = df[(df['Özet'] == 'Evet') & (df['Kritik'] == True)].copy()
-        
         if summary_crit.empty:
-            self.timeline_view.setHtml("<h3>Veri yok.</h3>")
+            self.timeline_view.setHtml("<h3 style='font-family:Segoe UI; padding:20px'>Veri yok.</h3>")
             return
 
-        # Timeline görünümü için scatter plot kullanımı daha şık olabilir
         fig = px.scatter(
-            summary_crit,
-            x="Bitiş_Date",
-            y="Ad",
-            color="Tamamlanma_Yüzdesi",
-            size="Süre_Num",
-            title="Kritik Kilometre Taşları (Timeline)",
+            summary_crit, x="Bitiş_Date", y="Ad", color="Tamamlanma_Yüzdesi",
+            size="Süre_Num", title="Kritik Timeline (Bitiş Tarihine Göre)",
             labels={"Bitiş_Date": "Hedef Tarih"}
         )
-        # Çizgiler ekleyelim
         for i, row in summary_crit.iterrows():
-            fig.add_shape(
-                type="line",
-                x0=row['Başlangıç_Date'], y0=row['Ad'],
-                x1=row['Bitiş_Date'], y1=row['Ad'],
-                line=dict(color="gray", width=1)
-            )
+            fig.add_shape(type="line", x0=row['Başlangıç_Date'], y0=row['Ad'], x1=row['Bitiş_Date'], y1=row['Ad'], line=dict(color="gray", width=1))
 
         fig.update_yaxes(autorange="reversed")
-        fig.update_layout(height=700)
+        fig.update_layout(height=700, font=dict(family="Segoe UI"))
         self.timeline_view.setHtml(fig.to_html(include_plotlyjs='cdn'))
 
     def generate_insights(self, df):
-        notes = []
-        notes.append("<h2>🤖 Proje Otomatik Analiz Raporu</h2>")
-        notes.append("<ul>")
+        # HTML İçerik (Siyah Yazı Rengi Zorunlu)
+        html = """
+        <html>
+        <head>
+            <style>
+                body { font-family: 'Segoe UI', sans-serif; background-color: white; color: black; padding: 20px; }
+                h2 { color: #0078D7; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+                h3 { color: #d32f2f; margin-top: 20px; }
+                li { margin-bottom: 8px; line-height: 1.6; }
+                .highlight { background-color: #fff3cd; padding: 2px 5px; border-radius: 3px; font-weight: bold; }
+                .safe { color: green; font-weight: bold; }
+                .danger { color: red; font-weight: bold; }
+            </style>
+        </head>
+        <body>
+        """
+        
+        html += "<h2>🤖 Akıllı Proje Analizi ve Risk Raporu</h2>"
+        
+        # 1. Kritik Hat Analizi
+        crit_active = df[df['Kritik'] == True]
+        
+        if crit_active.empty:
+            html += "<p class='safe'>✅ MÜKEMMEL: Şu anda projenin bitiş tarihini tehdit eden 'Kritik' ve 'Tamamlanmamış' aktivite bulunmamaktadır.</p>"
+        else:
+            html += f"<p>Şu anda proje genelinde, gecikmesi proje bitişini doğrudan öteleyecek <b>{len(crit_active)}</b> adet aktif (tamamlanmamış) kritik görev bulunmaktadır.</p>"
+            
+            # Kritik Görev İsimleri
+            html += "<h3>⚠️ Dikkat Edilmesi Gereken Kritik Aktiviteler (İlk 5)</h3><ul>"
+            for _, row in crit_active.sort_values(by='Başlangıç_Date').head(5).iterrows():
+                html += f"<li><b>{row['Ad']}</b> (Bitiş: {row['Bitiş_Date'].strftime('%d-%m-%Y')}) - <span class='danger'>Tamamlanma: %{int(row['Tamamlanma_Yüzdesi']*100)}</span></li>"
+            html += "</ul>"
 
-        # 1. Genel Durum
-        total = len(df)
-        completed = len(df[df['Tamamlanma_Yüzdesi'] == 1.0])
-        notes.append(f"<li>Projede toplam <b>{total}</b> aktivite bulunmaktadır. Bunların <b>{completed}</b> tanesi (%{(completed/total*100):.1f}) tamamlanmıştır.</li>")
-
-        # 2. Kritik Yol Analizi
-        crit_count = len(df[df['Kritik'] == True])
-        notes.append(f"<li>Projenin kaderini belirleyen <b>{crit_count}</b> adet Kritik Aktivite tespit edilmiştir. Bu aktivitelerdeki 1 günlük gecikme, proje bitişini 1 gün öteleyecektir.</li>")
-
-        # 3. En Uzun Süreli Kritik İş
-        crit_df = df[df['Kritik'] == True]
-        if not crit_df.empty:
-            longest_crit = crit_df.loc[crit_df['Süre_Num'].idxmax()]
-            notes.append(f"<li>Kritik yol üzerindeki en uzun süreli iş: <b>'{longest_crit['Ad']}'</b> ({longest_crit['Süre']}). Bu aktiviteye ekstra kaynak atanması süreyi kısaltabilir.</li>")
-
-            # 4. Proje Bitişini Belirleyen İş
-            last_task = crit_df.loc[crit_df['Bitiş_Date'].idxmax()]
-            notes.append(f"<li>Projenin bitiş tarihini belirleyen son aktivite: <b>'{last_task['Ad']}'</b> (Bitiş: {last_task['Bitiş_Date'].strftime('%d-%m-%Y')}).</li>")
-
-        # 5. Gecikme Riski (Basit bir mantık: Geçmişte başlayıp bitmemiş işler)
+        # 2. Gecikme Analizi (Bugün itibariyle bitmesi gereken ama bitmeyenler)
         today = pd.Timestamp.now()
         delayed = df[(df['Bitiş_Date'] < today) & (df['Tamamlanma_Yüzdesi'] < 1.0)]
+        
         if not delayed.empty:
-            notes.append(f"<li>⚠️ <b>DİKKAT:</b> Planlanan bitiş tarihi geçmiş olmasına rağmen tamamlanmamış <b>{len(delayed)}</b> aktivite bulunmaktadır. Acil müdahale gerektirir.</li>")
+            html += "<h3>🚫 Gecikmiş İşler (Acil Müdahale)</h3>"
+            html += f"<p>Planlanan bitiş tarihi geçmiş olmasına rağmen henüz %100 tamamlanmamış <b>{len(delayed)}</b> aktivite tespit edilmiştir. Bu aktiviteler projeyi geriye çekmektedir.</p>"
+            html += "<ul>"
+            for _, row in delayed.head(5).iterrows():
+                delay_days = (today - row['Bitiş_Date']).days
+                html += f"<li><b>{row['Ad']}</b> - <span class='highlight'>{delay_days} Gün Gecikmiş</span></li>"
+            html += "</ul>"
+        
+        # 3. Darboğaz Tahmini
+        # En çok öncülü/ardılı olan kritik işler (bağımlılığı yüksek)
+        # Bu basit veri setinde öncüller sütununu string olarak analiz edebiliriz
+        if not crit_active.empty:
+             # Basitçe en uzun süreli kritik işi bulalım
+            longest = crit_active.loc[crit_active['Süre_Num'].idxmax()]
+            html += "<h3>🔗 Potansiyel Darboğaz</h3>"
+            html += f"<p>Kritik hat üzerindeki en uzun süreli aktivite: <b>{longest['Ad']}</b> ({longest['Süre']}). Bu aktivitedeki verimlilik kaybı projenin genelini en çok etkileyecek faktördür.</p>"
+
+        # 4. Genel Tavsiye
+        summary_row = df[df['Benzersiz_Kimlik'] == 1]
+        progress = summary_row.iloc[0]['Tamamlanma_Yüzdesi']*100 if not summary_row.empty else df['Tamamlanma_Yüzdesi'].mean()*100
+        
+        html += "<h3>💡 Yönetici Özeti</h3>"
+        if progress < 50:
+            html += "<p>Proje henüz ilk yarıdadır. Kritik hat üzerindeki kaynak planlamasını sıkı tutarak ileriki aşamalardaki sapmaları önleyebilirsiniz.</p>"
+        elif progress >= 50 and not crit_active.empty:
+            html += "<p>Proje yarıyı geçmiştir ancak kritik aktiviteler devam etmektedir. Odaklanılması gereken nokta, yukarıda listelenen kritik işlerin günlük takibidir.</p>"
         else:
-            notes.append(f"<li>✅ Şu an itibariyle planlanan tarihe göre gecikmiş (tamamlanmamış) aktivite görünmemektedir.</li>")
+            html += "<p>Proje son aşamalara yaklaşmaktadır ve kritik riskler minimize edilmiştir.</p>"
 
-        # 6. Önümüzdeki Yoğunluk
-        next_week = today + timedelta(days=7)
-        upcoming = df[(df['Başlangıç_Date'] > today) & (df['Başlangıç_Date'] <= next_week)]
-        notes.append(f"<li>Önümüzdeki 7 gün içinde başlaması gereken <b>{len(upcoming)}</b> yeni aktivite bulunmaktadır. Kaynak planlamasını kontrol ediniz.</li>")
-
-        notes.append("</ul>")
-        notes.append("<p><i>*Bu rapor yüklenen veriler üzerinden algoritmik olarak oluşturulmuştur.</i></p>")
-
-        self.insights_text.setHtml("".join(notes))
+        html += "</body></html>"
+        self.insights_text.setHtml(html)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
