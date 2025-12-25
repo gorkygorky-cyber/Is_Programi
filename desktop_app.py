@@ -31,6 +31,14 @@ STYLE_SHEET = """
 """
 
 # --- YARDIMCI FONKSİYONLAR ---
+def format_date_tr(date_obj):
+    if pd.isna(date_obj): return "-"
+    months = {
+        1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran",
+        7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"
+    }
+    return f"{date_obj.day} {months[date_obj.month]} {date_obj.year}"
+
 def parse_turkish_date(date_str):
     if isinstance(date_str, (pd.Timestamp, datetime)): return date_str
     if not isinstance(date_str, str) or str(date_str).lower() in ["yok", "nan", "nat", ""]: return pd.NaT
@@ -46,7 +54,6 @@ def parse_turkish_date(date_str):
 def clean_duration(val):
     if isinstance(val, (int, float)): return float(val)
     if isinstance(val, str):
-        # "800 gün" -> 800.0
         val = val.lower().replace(" gün", "").replace("g", "").replace("day", "").replace("dy", "").replace(" ", "")
         try: return float(val)
         except: return 0.0
@@ -74,7 +81,7 @@ class KPICard(QFrame):
 class ProjectApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Proje Kontrol Merkezi v10.0 (Smart Logic)")
+        self.setWindowTitle("Proje Kontrol Merkezi v11.0 (Advanced Filters)")
         self.setGeometry(100, 100, 1600, 900)
         self.setStyleSheet(STYLE_SHEET)
         try: self.setWindowIcon(QIcon(resource_path("app_icon.ico")))
@@ -153,14 +160,13 @@ class ProjectApp(QMainWindow):
         df['Benzersiz_Kimlik'] = df['Benzersiz_Kimlik'].apply(normalize_id)
         df['Başlangıç_Date'] = df['Başlangıç'].apply(parse_turkish_date)
         df['Bitiş_Date'] = df['Bitiş'].apply(parse_turkish_date)
-        # Fiili Tarihleri de al (Yok ise NaT döner)
         df['Fiili_Başlangıç_Date'] = df['Fiili_Başlangıç'].apply(parse_turkish_date)
         df['Fiili_Bitiş_Date'] = df['Fiili_Bitiş'].apply(parse_turkish_date)
         
         df['Süre_Num'] = df['Süre'].apply(clean_duration)
         df['Bolluk_Num'] = df['Toplam_Bolluk'].apply(clean_duration)
         
-        # Kritik: Bolluk<=0 VE Tamamlanmamış
+        # Kritiklik: Bolluk <= 0 ve Tamamlanmamış
         df['Kritik'] = (df['Bolluk_Num'] <= 0) & (pd.isna(df['Fiili_Bitiş_Date']))
         df['Durum'] = df.apply(lambda x: 'Kritik' if x['Kritik'] else ('Tamamlandı' if pd.notna(x['Fiili_Bitiş_Date']) else 'Normal'), axis=1)
         return df
@@ -195,13 +201,53 @@ class ProjectApp(QMainWindow):
         t_prog = min(100, (elapsed/total)*100) if total>0 else 0
         fig.add_trace(go.Indicator(mode="gauge+number+delta", value=prog, delta={'reference': t_prog}, gauge={'axis':{'range':[None,100]}, 'bar':{'color':"#0078D7"}, 'threshold':{'line':{'color':'red','width':4}, 'value':t_prog}}), row=1, col=1)
         
-        crit = df[df['Kritik']==True].sort_values('Başlangıç_Date')
-        urg = crit[crit['Başlangıç_Date']<=today].head(8).copy(); urg['Tip']="🔴 ACİL"
-        fut = crit[crit['Başlangıç_Date']>today].head(8).copy(); fut['Tip']="📅 PLANLI"
-        comb = pd.concat([urg, fut])
+        # --- TABLO FILTRELERI (Özet Olmayanlar) ---
+        target_date = today + timedelta(days=7)
+        # Özet olmayanlar: Genellikle Özet="Hayır".
+        # Dosyada Özet sütunu var mı?
+        has_summary_col = 'Özet' in df.columns
         
+        # 1. Başlaması Kritik Olanlar (Bugün ile Bugün+7 arasında)
+        # Filtre: Özet=Hayır, Fiili Başlangıç=Yok, Planlanan Başlangıç < Bugün+7, Bolluk <= 30
+        mask_start = (pd.isna(df['Fiili_Başlangıç_Date'])) & \
+                     (df['Başlangıç_Date'] <= target_date) & \
+                     (df['Bolluk_Num'] <= 30)
+        
+        if has_summary_col: mask_start = mask_start & (df['Özet'] == 'Hayır')
+        
+        start_crit = df[mask_start].sort_values('Başlangıç_Date').head(10)
+
+        # 2. Tamamlanması Kritik Olanlar
+        # Filtre: Özet=Hayır, Fiili Bitiş=Yok, Planlanan Bitiş < Bugün+7, Bolluk <= 30
+        mask_finish = (pd.isna(df['Fiili_Bitiş_Date'])) & \
+                      (df['Bitiş_Date'] <= target_date) & \
+                      (df['Bolluk_Num'] <= 30)
+        
+        if has_summary_col: mask_finish = mask_finish & (df['Özet'] == 'Hayır')
+        
+        finish_crit = df[mask_finish].sort_values('Bitiş_Date').head(10)
+
+        # Tek Tabloda Birleştirme (Kategori ekleyerek)
+        start_crit['Kategori'] = "🟢 BAŞLANGIÇ RİSKİ"
+        start_crit['Tarih_Gosterim'] = start_crit['Başlangıç_Date']
+        
+        finish_crit['Kategori'] = "🔴 BİTİŞ RİSKİ"
+        finish_crit['Tarih_Gosterim'] = finish_crit['Bitiş_Date']
+
+        comb = pd.concat([start_crit, finish_crit])
+
         if not comb.empty:
-            fig.add_trace(go.Table(header=dict(values=["Durum", "İş Adı", "Bitiş", "%"], fill_color='#2c3e50', font=dict(color='white')), cells=dict(values=[comb['Tip'], comb['Ad'].str.slice(0,30), comb['Bitiş_Date'].dt.strftime('%d-%m'), (comb['Tamamlanma_Yüzdesi']*100).map('{:.0f}'.format)], fill_color='#ecf0f1', font=dict(color='black'))), row=1, col=2)
+            # Tarih Formatlama
+            tarihler = comb['Tarih_Gosterim'].apply(format_date_tr)
+            
+            fig.add_trace(go.Table(
+                header=dict(values=["Risk Türü", "Aktivite Adı", "Kritik Tarih", "Bolluk"], 
+                            fill_color='#2c3e50', font=dict(color='white')), 
+                cells=dict(values=[comb['Kategori'], comb['Ad'].str.slice(0,40), tarihler, comb['Bolluk_Num']], 
+                           fill_color='#ecf0f1', font=dict(color='black'))
+            ), row=1, col=2)
+        else:
+            fig.add_trace(go.Table(header=dict(values=["Bilgi"]), cells=dict(values=[["Önümüzdeki hafta için kritik risk bulunamadı."]])), row=1, col=2)
         
         cnt = df['Durum'].value_counts()
         fig.add_trace(go.Pie(labels=cnt.index, values=cnt.values, hole=.5, marker_colors=['#e74c3c', '#3498db', '#2ecc71']), row=2, col=1)
@@ -212,44 +258,51 @@ class ProjectApp(QMainWindow):
         merged = pd.merge(df_c, df_b, on="Benzersiz_Kimlik", how="inner", suffixes=('_cur', '_base'))
         today = pd.Timestamp.now()
 
-        # --- FİLTRELEME MANTIĞI ---
-        # 1. Ortak Havuz: Sadece Güncelde HENÜZ BİTMEMİŞ (Fiili Bitiş == NaT) işleri al
+        # Özet Filtresi (Varsa)
+        if 'Özet_cur' in merged.columns:
+            merged = merged[merged['Özet_cur'] == 'Hayır']
+
+        # Ortak Havuz: Sadece Güncelde HENÜZ BİTMEMİŞ işleri al
         active_pool = merged[pd.isna(merged['Fiili_Bitiş_Date_cur'])]
 
-        # --- A. Başlaması Gecikenler ---
-        # (Baseline Plan < Bugün) VE (Güncel Fiili Başlangıç YOK) VE (Güncel Plan > Baseline Plan)
+        # A. Başlaması Gecikenler
+        # Baseline Plan < Bugün VE Fiili Başlangıç YOK VE Güncel Plan > Baseline Plan + Bolluk<=30
         start_delayed = active_pool[
             (active_pool['Başlangıç_Date_base'] < today) & 
             (pd.isna(active_pool['Fiili_Başlangıç_Date_cur'])) &
-            (active_pool['Başlangıç_Date_cur'] > active_pool['Başlangıç_Date_base'])
+            (active_pool['Başlangıç_Date_cur'] > active_pool['Başlangıç_Date_base']) &
+            (active_pool['Bolluk_Num_cur'] <= 30)
         ]
         
-        # --- B. Bitmesi Gecikenler ---
-        # (Baseline Plan < Bugün) VE (Güncel Fiili Bitiş YOK - zaten active_pool da yok) VE (Güncel Plan > Baseline Plan)
+        # B. Bitmesi Gecikenler
+        # Baseline Plan < Bugün VE Fiili Bitiş YOK (zaten havuzda yok) VE Güncel Plan > Baseline Plan + Bolluk<=30
         finish_delayed = active_pool[
             (active_pool['Bitiş_Date_base'] < today) &
-            (active_pool['Bitiş_Date_cur'] > active_pool['Bitiş_Date_base'])
+            (active_pool['Bitiş_Date_cur'] > active_pool['Bitiş_Date_base']) &
+            (active_pool['Bolluk_Num_cur'] <= 30)
         ]
 
-        # --- C. Süresi Kısılanlar ---
-        # Süresi Azalmış Olanlar (Süre_base - Süre_cur > 0)
-        # Sadece active_pool değil, genel bakılabilir ama risk analizi için active daha iyi
+        # C. Süresi Kısılanlar
+        # Süre_base - Süre_cur > 0
         active_pool_copy = active_pool.copy()
         active_pool_copy['Süre_Fark'] = active_pool_copy['Süre_Num_base'] - active_pool_copy['Süre_Num_cur']
-        compressed = active_pool_copy[active_pool_copy['Süre_Fark'] > 0]
+        compressed = active_pool_copy[
+            (active_pool_copy['Süre_Fark'] > 0) &
+            (active_pool_copy['Bolluk_Num_cur'] <= 30)
+        ]
 
-        # --- D. Kritikliği Artanlar ---
+        # D. Kritikliği Artanlar
         # Bolluk azalmış VE Güncel Bolluk <= 30
         active_pool_copy['Bolluk_Fark'] = active_pool_copy['Bolluk_Num_base'] - active_pool_copy['Bolluk_Num_cur']
         worsening = active_pool_copy[
-            (active_pool_copy['Bolluk_Fark'] > 0) & # Bolluk azalmış (Eski > Yeni)
+            (active_pool_copy['Bolluk_Fark'] > 0) & 
             (active_pool_copy['Bolluk_Num_cur'] <= 30)
         ]
 
         # GRAFİKLER
         fig = make_subplots(rows=2, cols=2, 
-            subplot_titles=("Başlaması Gecikenler (Top 10)", "Bitmesi Gecikenler (Top 10)", 
-                            "Süresi Kısılanlar (Top 10)", "Kritikliği Artanlar (Top 10)"), 
+            subplot_titles=("Başlaması Gecikenler (Bolluk<=30)", "Bitmesi Gecikenler (Bolluk<=30)", 
+                            "Süresi Kısılanlar (Bolluk<=30)", "Kritikliği Artanlar (Bolluk<=30)"), 
             specs=[[{"type": "table"}, {"type": "table"}], [{"type": "table"}, {"type": "table"}]])
 
         def add_comp_table(data, col1, header1, col2, header2, row, col):
@@ -257,28 +310,18 @@ class ProjectApp(QMainWindow):
                 fig.add_trace(go.Table(header=dict(values=["Durum"], fill_color='#34495e', font=dict(color='white')), cells=dict(values=[["Kriterlere uygun veri yok"]], fill_color='#ecf0f1', font=dict(color='black'))), row=row, col=col)
             else:
                 top = data.head(10)
-                # Tarihleri string yap
-                try: v1 = top[col1].dt.strftime('%d-%m-%Y')
-                except: v1 = top[col1]
-                try: v2 = top[col2].dt.strftime('%d-%m-%Y') if header2 != "Süre Farkı" else top[col2]
-                except: v2 = top[col2]
+                # Tarihleri formatla
+                v1 = top[col1].apply(format_date_tr) if 'Date' in col1 else top[col1]
+                v2 = top[col2].apply(format_date_tr) if 'Date' in col2 else top[col2]
 
                 fig.add_trace(go.Table(
-                    header=dict(values=["Aktivite", header1, header2], fill_color='#34495e', font=dict(color='white')),
-                    cells=dict(values=[top['Ad_cur'].str.slice(0, 30), v1, v2], fill_color='#ecf0f1', font=dict(color='black'))
+                    header=dict(values=["Aktivite", header1, header2, "Bolluk"], fill_color='#34495e', font=dict(color='white')),
+                    cells=dict(values=[top['Ad_cur'].str.slice(0, 30), v1, v2, top['Bolluk_Num_cur']], fill_color='#ecf0f1', font=dict(color='black'))
                 ), row=row, col=col)
 
-        # Tablo 1: Başlangıçlar (Base Plan vs Güncel Plan)
         add_comp_table(start_delayed, 'Başlangıç_Date_base', 'Base Başlangıç', 'Başlangıç_Date_cur', 'Güncel Başlangıç', 1, 1)
-        
-        # Tablo 2: Bitişler (Base Bitiş vs Güncel Bitiş)
         add_comp_table(finish_delayed, 'Bitiş_Date_base', 'Base Bitiş', 'Bitiş_Date_cur', 'Güncel Bitiş', 1, 2)
-        
-        # Tablo 3: Süre Kısılanlar (Eski Süre vs Yeni Süre)
-        # Sadece farkı değil, eski ve yeniyi görelim
         add_comp_table(compressed, 'Süre_Num_base', 'Base Süre', 'Süre_Num_cur', 'Güncel Süre', 2, 1)
-        
-        # Tablo 4: Kritikliği Artanlar (Eski Bolluk vs Yeni Bolluk)
         add_comp_table(worsening, 'Bolluk_Num_base', 'Base Bolluk', 'Bolluk_Num_cur', 'Güncel Bolluk', 2, 2)
 
         fig.update_layout(height=800, margin=dict(l=10, r=10, t=50, b=10), font={'family': "Segoe UI"})
@@ -314,8 +357,11 @@ class ProjectApp(QMainWindow):
         """
         html += "<h2>🤖 Proje Analiz Raporu</h2>"
         
+        # Filtre: Özet olmayanlar
+        tasks_curr = df_curr[df_curr['Özet'] == 'Hayır'] if 'Özet' in df_curr.columns else df_curr
+
         # 1. KRİTİK HAT ANALİZİ
-        crit_active = df_curr[df_curr['Kritik'] == True]
+        crit_active = tasks_curr[tasks_curr['Kritik'] == True]
         html += "<div class='category cat-critical'>"
         html += "<h3>🔥 Kritik Hat Analizi</h3>"
         if crit_active.empty:
@@ -323,14 +369,14 @@ class ProjectApp(QMainWindow):
         else:
             count = len(crit_active)
             html += f"<p>Proje genelinde bitiş tarihini doğrudan etkileyen <b>{count} adet</b> aktif kritik aktivite bulunmaktadır.</p>"
-            # İlk 3 kritik iş için cümle kur
             for _, row in crit_active.sort_values('Başlangıç_Date').head(3).iterrows():
-                html += f"<p>➡ <b>{row['Ad']}</b> aktivitesi şu an kritik yoldadır ve {row['Bitiş_Date'].strftime('%d %B')} tarihinde bitmesi planlanmaktadır. Bu aktivitedeki herhangi bir gecikme, projenin teslim tarihini öteleyecektir.</p>"
+                tarih = format_date_tr(row['Bitiş_Date'])
+                html += f"<p>➡ <b>{row['Ad']}</b> aktivitesi şu an kritik yoldadır ve {tarih} tarihinde bitmesi planlanmaktadır. Bu aktivitedeki herhangi bir gecikme, projenin teslim tarihini öteleyecektir.</p>"
         html += "</div>"
 
         # 2. GECİKME ANALİZİ (Bugüne Göre)
         today = pd.Timestamp.now()
-        delayed = df_curr[(df_curr['Bitiş_Date'] < today) & (pd.isna(df_curr['Fiili_Bitiş_Date']))]
+        delayed = tasks_curr[(tasks_curr['Bitiş_Date'] < today) & (pd.isna(tasks_curr['Fiili_Bitiş_Date']))]
         
         if not delayed.empty:
             html += "<div class='category cat-delay'>"
@@ -347,19 +393,17 @@ class ProjectApp(QMainWindow):
             html += "<h3>⚖️ Baseline Karşılaştırma Analizi</h3>"
             
             merged = pd.merge(df_curr, df_base, on="Benzersiz_Kimlik", how="inner", suffixes=('_cur', '_base'))
+            if 'Özet_cur' in merged.columns: merged = merged[merged['Özet_cur'] == 'Hayır']
+
             merged['Start_Delay'] = (merged['Başlangıç_Date_cur'] - merged['Başlangıç_Date_base']).dt.days
             merged['Finish_Delay'] = (merged['Bitiş_Date_cur'] - merged['Bitiş_Date_base']).dt.days
             merged['Süre_Fark'] = merged['Süre_Num_base'] - merged['Süre_Num_cur']
             merged['Bolluk_Fark'] = merged['Bolluk_Num_base'] - merged['Bolluk_Num_cur']
             
-            # Sadece aktif işler
             active_pool = merged[pd.isna(merged['Fiili_Bitiş_Date_cur'])]
 
             # a) Kritikleşenler
-            newly_critical = active_pool[
-                (active_pool['Bolluk_Num_base'] > 0) & 
-                (active_pool['Bolluk_Num_cur'] <= 0)
-            ]
+            newly_critical = active_pool[(active_pool['Bolluk_Num_base'] > 0) & (active_pool['Bolluk_Num_cur'] <= 0)]
             if not newly_critical.empty:
                 for _, row in newly_critical.head(3).iterrows():
                     html += f"<p>⚠️ <b>{row['Ad_cur']}</b> aktivitesi önceki planda kritik değilken, şu an kritik yola girmiştir. Öncelik seviyesi artırılmalıdır.</p>"
@@ -368,17 +412,19 @@ class ProjectApp(QMainWindow):
             compressed = active_pool[active_pool['Süre_Fark'] > 0]
             if not compressed.empty:
                 for _, row in compressed.head(3).iterrows():
-                    html += f"<p>⚡ <b>{row['Ad_cur']}</b> aktivitesinin süresi, önceki plana göre <b>{int(row['Süre_Fark'])} gün</b> kısaltılmıştır. Bu durum, gecikmeleri telafi etmek için yapılan bir sıkıştırma (crashing) işlemi olabilir.</p>"
+                    html += f"<p>⚡ <b>{row['Ad_cur']}</b> aktivitesinin süresi, önceki plana göre <b>{int(row['Süre_Fark'])} gün</b> kısaltılmıştır. Bu durum, gecikmeleri telafi etmek için yapılan bir sıkıştırma işlemidir.</p>"
 
-            # c) Bitişi Ötelenenler
-            delayed_finish = active_pool[
-                (active_pool['Bitiş_Date_base'] < today) &
-                (active_pool['Bitiş_Date_cur'] > active_pool['Bitiş_Date_base'])
+            # c) Başlaması Gecikenler (Cümle Olarak)
+            start_delayed = active_pool[
+                (active_pool['Başlangıç_Date_base'] < today) & 
+                (pd.isna(active_pool['Fiili_Başlangıç_Date_cur'])) &
+                (active_pool['Başlangıç_Date_cur'] > active_pool['Başlangıç_Date_base'])
             ]
-            if not delayed_finish.empty:
-                 row = delayed_finish.iloc[0]
-                 delay_days = (row['Bitiş_Date_cur'] - row['Bitiş_Date_base']).days
-                 html += f"<p>📉 <b>{row['Ad_cur']}</b> aktivitesinin bitiş tarihi Baseline'a göre <b>{delay_days} gün</b> ötelenmiştir.</p>"
+            if not start_delayed.empty:
+                row = start_delayed.iloc[0]
+                t1 = format_date_tr(row['Başlangıç_Date_base'])
+                t2 = format_date_tr(row['Başlangıç_Date_cur'])
+                html += f"<p>📉 <b>{row['Ad_cur']}</b> aktivitesinin başlaması gerekiyordu ({t1}) ancak güncel planda {t2} tarihine ötelenmiştir.</p>"
 
             html += "</div>"
 
