@@ -24,7 +24,14 @@ jobs:
 
     - name: Build EXE
       run: |
-        pyinstaller --noconsole --onefile --name="ProjePaneli" desktop_app.py
+        # Eğer ikon yoksa hata vermemesi için kontrol (Varsa ikonu kullanır, yoksa varsayılan)
+        if (Test-Path "app_icon.ico") {
+            echo "İkon dosyası bulundu, ekleniyor..."
+            pyinstaller --noconsole --onefile --name="ProjePaneli" --icon="app_icon.ico" --add-data="app_icon.ico;." desktop_app.py
+        } else {
+            echo "İkon dosyası bulunamadı, varsayılan ikon ile devam ediliyor..."
+            pyinstaller --noconsole --onefile --name="ProjePaneli" desktop_app.py
+        }
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
