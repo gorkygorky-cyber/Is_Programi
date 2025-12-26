@@ -40,7 +40,6 @@ def format_date_tr(date_obj):
     return f"{date_obj.day} {months[date_obj.month]} {date_obj.year}"
 
 def format_date_short(date_obj):
-    # Grafik üzerine sığması için daha kısa tarih formatı
     if pd.isna(date_obj): return ""
     months = {
         1: "Oca", 2: "Şub", 3: "Mar", 4: "Nis", 5: "May", 6: "Haz",
@@ -90,7 +89,7 @@ class KPICard(QFrame):
 class ProjectApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Proje Kontrol Merkezi v13.0 (Arrow Gantt)")
+        self.setWindowTitle("Proje Kontrol Merkezi v14.0 (Auto-Scale Gantt)")
         self.setGeometry(100, 100, 1600, 900)
         self.setStyleSheet(STYLE_SHEET)
         try: self.setWindowIcon(QIcon(resource_path("app_icon.ico")))
@@ -301,16 +300,21 @@ class ProjectApp(QMainWindow):
         # - Özet = Evet (Sadece Özet Aktiviteler)
         # - Bolluk_Num <= 30
         # - Benzersiz_Kimlik != '1' (En üst proje başlığını hariç tut)
+        # - Fiili_Bitiş_Date BOŞ (Yani Tamamlanmamış olanlar)
         
         if 'Özet' not in df.columns:
             self.web_gantt.setHtml("<h3>Veri hatası: 'Özet' sütunu bulunamadı.</h3>")
             return
             
-        mask = (df['Özet'] == 'Evet') & (df['Bolluk_Num'] <= 30) & (df['Benzersiz_Kimlik'] != '1')
+        mask = (df['Özet'] == 'Evet') & \
+               (df['Bolluk_Num'] <= 30) & \
+               (df['Benzersiz_Kimlik'] != '1') & \
+               (pd.isna(df['Fiili_Bitiş_Date']))
+               
         data = df[mask].copy()
         
         if data.empty:
-            self.web_gantt.setHtml("<h3>Kriterlere uygun özet aktivite bulunamadı.</h3><p>Filtre: Özet='Evet', Bolluk<=30, ID!=1</p>")
+            self.web_gantt.setHtml("<h3>Kriterlere uygun (Tamamlanmamış, Özet, Kritik) aktivite bulunamadı.</h3><p>Filtre: Özet='Evet', Bolluk<=30, ID!=1, Fiili Bitiş=Yok</p>")
             return
 
         # Sıralama (Gantt için yukarıdan aşağıya doğru tarih sırası)
@@ -371,7 +375,7 @@ class ProjectApp(QMainWindow):
             x=data['Başlangıç_Date'],
             mode='text',
             text=data['Başlangıç_Date'].apply(format_date_short),
-            textposition='middle left', # Noktanın soluna yaz
+            textposition='middle left', 
             textfont=dict(color='#7f8c8d', size=11),
             showlegend=False
         ))
@@ -382,7 +386,7 @@ class ProjectApp(QMainWindow):
             x=data['Bitiş_Date'],
             mode='text',
             text=data['Bitiş_Date'].apply(format_date_short),
-            textposition='middle right', # Noktanın sağına yaz
+            textposition='middle right', 
             textfont=dict(color='#7f8c8d', size=11),
             showlegend=False
         ))
@@ -390,13 +394,25 @@ class ProjectApp(QMainWindow):
         # D) LAYOUT AYARLARI
         today = pd.Timestamp.now()
         
+        # OTOMATİK ÖLÇEKLENDİRME İÇİN RANGE HESABI
+        start_min = data['Başlangıç_Date'].min()
+        end_max = data['Bitiş_Date'].max()
+        
+        # Biraz boşluk bırakalım (Padding)
+        total_span = end_max - start_min
+        buffer = total_span * 0.05
+        if buffer.days < 5: buffer = timedelta(days=5)
+        
+        xaxis_range = [start_min - buffer, end_max + buffer]
+
         fig.update_layout(
             barmode='overlay',
             height=max(600, len(data)*40),
             xaxis=dict(
                 side='top',
-                tickformat="%Y-Q%q", # Örn: 2024-Q1
-                dtick="M3", # 3 Aylık periyotlar (Çeyreklik)
+                tickformat="%Y-Q%q", # Yıl-Çeyrek formatı
+                # dtick="M3" -> KALDIRILDI (Otomatik ölçek için)
+                range=xaxis_range, # Veriye göre dinamik aralık
                 gridcolor='#ecf0f1',
                 title=""
             ),
