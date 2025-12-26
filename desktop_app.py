@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
 from datetime import datetime
-# timedelta modülüne artık ihtiyacımız yok, Pandas'ınkini kullanacağız
+import traceback 
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, 
                              QPushButton, QFileDialog, QLabel, QTabWidget, 
@@ -34,18 +34,12 @@ STYLE_SHEET = """
 # --- YARDIMCI FONKSİYONLAR ---
 def format_month_year_tr(date_obj):
     if pd.isna(date_obj): return ""
-    months = {
-        1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran",
-        7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"
-    }
+    months = {1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran", 7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"}
     return f"{months[date_obj.month]} {date_obj.year}"
 
 def format_date_tr_full(date_obj):
     if pd.isna(date_obj): return "-"
-    months = {
-        1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran",
-        7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"
-    }
+    months = {1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran", 7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"}
     return f"{date_obj.day} {months[date_obj.month]} {date_obj.year}"
 
 def parse_turkish_date(date_str):
@@ -90,7 +84,7 @@ class KPICard(QFrame):
 class ProjectApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Proje Kontrol Merkezi v13.0 (Fixed)")
+        self.setWindowTitle("Proje Kontrol Merkezi v15.0 (Stable & Fixed)")
         self.setGeometry(100, 100, 1600, 900)
         self.setStyleSheet(STYLE_SHEET)
         try: self.setWindowIcon(QIcon(resource_path("app_icon.ico")))
@@ -155,7 +149,9 @@ class ProjectApp(QMainWindow):
                 self.df_current = df
                 self.lbl_cur.setText(f"✅ {os.path.basename(path)}"); self.lbl_cur.setStyleSheet("color: #27ae60; font-weight: bold;")
             self.refresh_ui()
-        except Exception as e: QMessageBox.critical(self, "Hata", str(e))
+        except Exception as e:
+            msg = f"Dosya işlenirken hata oluştu:\n{str(e)}"
+            QMessageBox.critical(self, "Hata", msg)
 
     def process_data(self, path):
         df = pd.read_csv(path) if path.endswith('.csv') else pd.read_excel(path)
@@ -166,11 +162,17 @@ class ProjectApp(QMainWindow):
              else: raise ValueError("Dosyada 'Benzersiz_Kimlik' sütunu bulunamadı!")
         
         df['Benzersiz_Kimlik'] = df['Benzersiz_Kimlik'].apply(normalize_id)
-        df['Başlangıç_Date'] = df['Başlangıç'].apply(parse_turkish_date)
-        df['Bitiş_Date'] = df['Bitiş'].apply(parse_turkish_date)
-        df['Fiili_Başlangıç_Date'] = df['Fiili_Başlangıç'].apply(parse_turkish_date)
-        df['Fiili_Bitiş_Date'] = df['Fiili_Bitiş'].apply(parse_turkish_date)
         
+        # Tarih Dönüşümleri - Hata Önleyici Kolon Kontrolü
+        date_cols = ['Başlangıç', 'Bitiş', 'Fiili_Başlangıç', 'Fiili_Bitiş']
+        target_cols = ['Başlangıç_Date', 'Bitiş_Date', 'Fiili_Başlangıç_Date', 'Fiili_Bitiş_Date']
+        
+        for raw, target in zip(date_cols, target_cols):
+            if raw in df.columns:
+                df[target] = df[raw].apply(parse_turkish_date)
+            else:
+                df[target] = pd.NaT # Kolon yoksa NaT bas
+
         df['Süre_Num'] = df['Süre'].apply(clean_duration)
         df['Bolluk_Num'] = df['Toplam_Bolluk'].apply(clean_duration)
         
@@ -187,9 +189,11 @@ class ProjectApp(QMainWindow):
             self.generate_insights(self.df_current, self.df_baseline)
             if self.df_baseline is not None: self.update_comparison(self.df_current, self.df_baseline)
         except Exception as e:
-            QMessageBox.critical(self, "Arayüz Hatası", f"Hata: {str(e)}")
+            traceback.print_exc() # Konsola detaylı hata bas
+            QMessageBox.critical(self, "Arayüz Hatası", f"Ekran yenilenirken hata oluştu. Detay:\n{str(e)}")
 
     def update_dashboard(self, df):
+        # Güvenli temizlik
         while self.kpi_layout.count():
             item = self.kpi_layout.takeAt(0)
             if item.widget(): item.widget().deleteLater()
@@ -211,14 +215,13 @@ class ProjectApp(QMainWindow):
                                                    [{"type":"domain"}, {"type":"table"}]], 
                             column_widths=[0.35, 0.65])
         
+        # Gauge Chart (Sadeleştirilmiş)
         fig.add_trace(go.Indicator(
             mode = "gauge+number", value = prog,
             gauge = {
                 'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
                 'bar': {'color': "#0078D7"},
-                'bgcolor': "white",
-                'borderwidth': 2,
-                'bordercolor': "gray",
+                'bgcolor': "white", 'borderwidth': 2, 'bordercolor': "gray",
                 'steps': [{'range': [0, 100], 'color': "#f4f7f6"}]
             }
         ), row=1, col=1)
@@ -226,20 +229,28 @@ class ProjectApp(QMainWindow):
         cnt = df['Durum'].value_counts()
         fig.add_trace(go.Pie(labels=cnt.index, values=cnt.values, hole=.5, marker_colors=['#e74c3c', '#3498db', '#2ecc71']), row=2, col=1)
 
-        # --- DÜZELTME: timedelta yerine pd.DateOffset ---
-        target_date = today + pd.DateOffset(days=7)
+        # --- TABLO FILTRELERI ---
+        # HATA ÇÖZÜMÜ: pd.Timedelta kullanıldı. timedelta(days=7) yerine pd.Timedelta(days=7)
+        target_date = today + pd.Timedelta(days=7)
         has_summary_col = 'Özet' in df.columns
         
         # A. Başlaması Kritik
-        mask_start = (pd.isna(df['Fiili_Başlangıç_Date'])) & (df['Başlangıç_Date'] <= target_date) & (df['Bolluk_Num'] <= 30)
+        mask_start = (pd.isna(df['Fiili_Başlangıç_Date'])) & \
+                     (df['Başlangıç_Date'] <= target_date) & \
+                     (df['Bolluk_Num'] <= 30)
+        
         if has_summary_col: mask_start = mask_start & (df['Özet'] == 'Hayır')
         start_crit = df[mask_start].sort_values('Başlangıç_Date').head(10)
 
         # B. Tamamlanması Kritik
-        mask_finish = (pd.isna(df['Fiili_Bitiş_Date'])) & (df['Bitiş_Date'] <= target_date) & (df['Bolluk_Num'] <= 30)
+        mask_finish = (pd.isna(df['Fiili_Bitiş_Date'])) & \
+                      (df['Bitiş_Date'] <= target_date) & \
+                      (df['Bolluk_Num'] <= 30)
+        
         if has_summary_col: mask_finish = mask_finish & (df['Özet'] == 'Hayır')
         finish_crit = df[mask_finish].sort_values('Bitiş_Date').head(10)
 
+        # Tablo 1
         if not start_crit.empty:
             tarihler = start_crit['Başlangıç_Date'].apply(format_date_tr_full)
             fig.add_trace(go.Table(
@@ -249,6 +260,7 @@ class ProjectApp(QMainWindow):
         else:
             fig.add_trace(go.Table(header=dict(values=["🟢 HAFTALIK BAŞLANGIÇ RİSKİ"], fill_color='#2c3e50', font=dict(color='white')), cells=dict(values=[["Riskli aktivite yok."]], fill_color='#ecf0f1', font=dict(color='black'))), row=1, col=2)
 
+        # Tablo 2
         if not finish_crit.empty:
             tarihler = finish_crit['Bitiş_Date'].apply(format_date_tr_full)
             fig.add_trace(go.Table(
@@ -265,14 +277,11 @@ class ProjectApp(QMainWindow):
         merged = pd.merge(df_c, df_b, on="Benzersiz_Kimlik", how="inner", suffixes=('_cur', '_base'))
         today = pd.Timestamp.now()
         
-        # Filtreler: Özet Olmayan
         if 'Özet_cur' in merged.columns: merged = merged[merged['Özet_cur'] == 'Hayır']
         
-        # Ortak Havuz: Güncelde Henüz Bitmemiş (Aktif)
         active_pool = merged[pd.isna(merged['Fiili_Bitiş_Date_cur'])]
 
         # A. Başlaması Gecikenler
-        # Base < Bugün VE Fiili Başlangıç Yok VE Güncel > Base
         start_delayed = active_pool[
             (active_pool['Başlangıç_Date_base'] < today) & 
             (pd.isna(active_pool['Fiili_Başlangıç_Date_cur'])) & 
@@ -280,21 +289,17 @@ class ProjectApp(QMainWindow):
         ]
         
         # B. Bitmesi Gecikenler
-        # Base < Bugün VE Güncel > Base (Zaten Active Pool'da olduğu için Fiili Bitiş yok)
         finish_delayed = active_pool[
             (active_pool['Bitiş_Date_base'] < today) & 
             (active_pool['Bitiş_Date_cur'] > active_pool['Bitiş_Date_base'])
         ]
         
         # C. Süresi Kısılanlar
-        # Süre_Base > Süre_Cur (Pozitif fark)
         active_pool_copy = active_pool.copy()
         active_pool_copy['Süre_Fark'] = active_pool_copy['Süre_Num_base'] - active_pool_copy['Süre_Num_cur']
-        # Basit float çıkarma işlemi hatasızdır
         compressed = active_pool_copy[active_pool_copy['Süre_Fark'] > 0]
         
-        # D. Kritikliği Artanlar (Riskli)
-        # Bolluk_Base > Bolluk_Cur (Pozitif Fark) VE Bolluk_Cur <= 30
+        # D. Kritikliği Artanlar
         active_pool_copy['Bolluk_Fark'] = active_pool_copy['Bolluk_Num_base'] - active_pool_copy['Bolluk_Num_cur']
         worsening = active_pool_copy[
             (active_pool_copy['Bolluk_Fark'] > 0) & 
@@ -321,6 +326,7 @@ class ProjectApp(QMainWindow):
         self.web_comp.setHtml(fig.to_html(include_plotlyjs='cdn'))
 
     def update_timeline(self, df):
+        # 1. VERİ HAZIRLIĞI (Özet Aktiviteler)
         if 'Özet' in df.columns: data = df[df['Özet'] == 'Evet'].copy()
         else: data = df.head(30).copy()
         
@@ -338,20 +344,19 @@ class ProjectApp(QMainWindow):
             pct = row['Tamamlanma_Yüzdesi']
             done_days = duration_days * pct
             
-            # Kalan Kısım (Açık Gri)
+            # Kalan Kısım
             fig.add_trace(go.Bar(y=[row['Ad']], x=[duration_days], base=[start], orientation='h', marker=dict(color='#e0e0e0', line=dict(color='#2c3e50', width=1)), hoverinfo='text', hovertext=f"{row['Ad']}<br>Baş: {format_date_tr_full(start)}<br>Bit: {format_date_tr_full(finish)}<br>İlerleme: %{int(pct*100)}", showlegend=False))
-            # Yapılan Kısım (Koyu)
+            # Yapılan Kısım
             if pct > 0:
                 fig.add_trace(go.Bar(y=[row['Ad']], x=[done_days], base=[start], orientation='h', marker=dict(color='#2c3e50', line=dict(width=0)), hoverinfo='skip', showlegend=False))
 
-            # Etiketler
             fig.add_annotation(x=start, y=row['Ad'], text=format_month_year_tr(start), showarrow=False, xanchor='right', xshift=-10, font=dict(size=10, color='#7f8c8d'))
             fig.add_annotation(x=finish, y=row['Ad'], text=format_month_year_tr(finish), showarrow=False, xanchor='left', xshift=10, font=dict(size=10, color='#7f8c8d'))
 
         today = pd.Timestamp.now()
         min_date = data['Başlangıç_Date'].min()
         if pd.notna(min_date):
-            # HATA ÇÖZÜMÜ: pd.Timedelta kullanıldı
+            # HATA ÇÖZÜMÜ: pd.Timedelta
             fig.add_shape(type="rect", xref="x", yref="paper", x0=min_date - pd.Timedelta(days=30), y0=0, x1=today, y1=1, fillcolor="lightgray", opacity=0.2, layer="below", line_width=0)
         
         fig.add_vline(x=today, line_width=2, line_dash="dash", line_color="red", annotation_text="Bugün")
