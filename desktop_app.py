@@ -90,7 +90,7 @@ class KPICard(QFrame):
 class ProjectApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Proje Kontrol Merkezi v12.1 (Gantt Fix)")
+        self.setWindowTitle("Proje Kontrol Merkezi v13.0 (Arrow Gantt)")
         self.setGeometry(100, 100, 1600, 900)
         self.setStyleSheet(STYLE_SHEET)
         try: self.setWindowIcon(QIcon(resource_path("app_icon.ico")))
@@ -296,21 +296,29 @@ class ProjectApp(QMainWindow):
         self.web_comp.setHtml(fig.to_html(include_plotlyjs='cdn'))
 
     def update_gantt(self, df):
-        # DUZELTME: Sadece Detay Aktiviteleri Göster (Özet = Hayır)
-        # Eğer dosyanızda 'Özet' sütunu yoksa veya hepsi 'Hayır' ise çalışmaya devam eder.
-        # Kritik == True olan detay işleri al.
-        if 'Özet' in df.columns:
-            data = df[(df['Özet']=='Hayır') & (df['Kritik']==True)].copy()
-        else:
-            data = df[df['Kritik']==True].copy()
+        # 1. FILTRELEME
+        # Kriterler:
+        # - Özet = Evet (Sadece Özet Aktiviteler)
+        # - Bolluk_Num <= 30
+        # - Benzersiz_Kimlik != '1' (En üst proje başlığını hariç tut)
+        
+        if 'Özet' not in df.columns:
+            self.web_gantt.setHtml("<h3>Veri hatası: 'Özet' sütunu bulunamadı.</h3>")
+            return
             
-        if data.empty: 
-            self.web_gantt.setHtml("<h3>Kritik hat üzerinde görüntülenecek DETAY aktivite bulunamadı.</h3><p>Filtre kriteri: Özet='Hayır' VE Kritik=True</p>")
+        mask = (df['Özet'] == 'Evet') & (df['Bolluk_Num'] <= 30) & (df['Benzersiz_Kimlik'] != '1')
+        data = df[mask].copy()
+        
+        if data.empty:
+            self.web_gantt.setHtml("<h3>Kriterlere uygun özet aktivite bulunamadı.</h3><p>Filtre: Özet='Evet', Bolluk<=30, ID!=1</p>")
             return
 
-        # Veri Hazırlığı
+        # Sıralama (Gantt için yukarıdan aşağıya doğru tarih sırası)
+        data = data.sort_values('Başlangıç_Date', ascending=False)
+        
+        # Süre hesaplamaları
         data['Delta'] = data['Bitiş_Date'] - data['Başlangıç_Date']
-        data['Tamamlanma_Yüzdesi'] = data['Tamamlanma_Yüzdesi'].fillna(0) # NaN ise 0 yap
+        data['Tamamlanma_Yüzdesi'] = data['Tamamlanma_Yüzdesi'].fillna(0)
         
         # Tamamlanan kısmın bitiş tarihi
         data['Progress_End'] = data['Başlangıç_Date'] + (data['Delta'] * data['Tamamlanma_Yüzdesi'])
@@ -318,80 +326,87 @@ class ProjectApp(QMainWindow):
         # Grafik
         fig = go.Figure()
 
-        # A) PLANLANAN ÇUBUĞU (Arka Plan - Açık Renk)
+        # A) PLAN ÇUBUĞU (Arka Plan - Açık Gri - Gövde)
         fig.add_trace(go.Bar(
             y=data['Ad'],
-            x=data['Delta'].dt.total_seconds() * 1000, # X ekseni süre (ms)
-            base=data['Başlangıç_Date'], # Başlangıç noktası tarih
+            x=data['Delta'].dt.total_seconds() * 1000,
+            base=data['Başlangıç_Date'],
             orientation='h',
-            marker=dict(color='#bdc3c7', opacity=0.5), # Açık gri
-            name='Toplam Süre',
-            hoverinfo='x+y',
+            marker=dict(color='#bdc3c7'),
+            name='Plan',
+            hoverinfo='all',
             showlegend=False
         ))
-
-        # B) TAMAMLANAN ÇUBUĞU (Ön Plan - Koyu Renk)
-        progress_duration = (data['Progress_End'] - data['Başlangıç_Date']).dt.total_seconds() * 1000
         
+        # OK ŞEKLİ İÇİN ÜÇGEN BAŞLIK (Gri)
+        fig.add_trace(go.Scatter(
+            y=data['Ad'],
+            x=data['Bitiş_Date'],
+            mode='markers',
+            marker=dict(symbol='triangle-right', size=15, color='#bdc3c7'),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+
+        # B) İLERLEME ÇUBUĞU (Ön Plan - Koyu Renk)
+        progress_duration = (data['Progress_End'] - data['Başlangıç_Date']).dt.total_seconds() * 1000
         fig.add_trace(go.Bar(
             y=data['Ad'],
             x=progress_duration,
             base=data['Başlangıç_Date'],
             orientation='h',
-            marker=dict(color='#2c3e50'), # Koyu Lacivert/Gri
-            text=(data['Tamamlanma_Yüzdesi'] * 100).astype(int).astype(str) + '%', # % YAZISI
+            marker=dict(color='#2c3e50'),
+            text=(data['Tamamlanma_Yüzdesi'] * 100).astype(int).astype(str) + '%',
             textposition='inside',
             insidetextanchor='middle',
             textfont=dict(color='white', weight='bold'),
-            name='Tamamlanan',
-            hoverinfo='x+y',
+            name='İlerleme',
             showlegend=False
         ))
 
-        # C) BAŞLANGIÇ VE BİTİŞ TARİHLERİ (Scatter Text ile)
-        # Sol Taraf (Başlangıç)
+        # C) TARİH ETİKETLERİ
+        # Başlangıç Tarihi (Sol Tarafta)
         fig.add_trace(go.Scatter(
             y=data['Ad'],
             x=data['Başlangıç_Date'],
             mode='text',
             text=data['Başlangıç_Date'].apply(format_date_short),
-            textposition='middle left',
-            textfont=dict(color='#7f8c8d', size=10),
+            textposition='middle left', # Noktanın soluna yaz
+            textfont=dict(color='#7f8c8d', size=11),
             showlegend=False
         ))
         
-        # Sağ Taraf (Bitiş)
+        # Bitiş Tarihi (Sağ Tarafta)
         fig.add_trace(go.Scatter(
             y=data['Ad'],
             x=data['Bitiş_Date'],
             mode='text',
             text=data['Bitiş_Date'].apply(format_date_short),
-            textposition='middle right',
-            textfont=dict(color='#7f8c8d', size=10),
+            textposition='middle right', # Noktanın sağına yaz
+            textfont=dict(color='#7f8c8d', size=11),
             showlegend=False
         ))
 
-        # D) BUGÜN ÇİZGİSİ VE DÜZEN
+        # D) LAYOUT AYARLARI
         today = pd.Timestamp.now()
         
         fig.update_layout(
-            barmode='overlay', # Çubukların üst üste binmesi için
-            height=max(600, len(data)*30), # Dinamik yükseklik
+            barmode='overlay',
+            height=max(600, len(data)*40),
             xaxis=dict(
-                side='top', # Tarihler üstte
-                tickformat="%Y-Ç%q", # 2024-Ç1 formatı
-                dtick="M3", # 3 Aylık aralıklarla göster (Çeyrekler)
-                gridcolor='#ecf0f1'
+                side='top',
+                tickformat="%Y-Q%q", # Örn: 2024-Q1
+                dtick="M3", # 3 Aylık periyotlar (Çeyreklik)
+                gridcolor='#ecf0f1',
+                title=""
             ),
             yaxis=dict(
-                autorange="reversed", # Yukarıdan aşağı sırala
                 showgrid=False
             ),
             plot_bgcolor='white',
             margin=dict(l=10, r=10, t=50, b=10),
             font=dict(family="Segoe UI"),
             shapes=[
-                # Bugün çizgisi
                 dict(
                     type="line",
                     x0=today, x1=today,
@@ -401,7 +416,6 @@ class ProjectApp(QMainWindow):
                 )
             ],
             annotations=[
-                # Bugün etiketi
                 dict(
                     x=today, y=0,
                     xref="x", yref="paper",
