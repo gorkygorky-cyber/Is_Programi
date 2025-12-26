@@ -45,7 +45,7 @@ def format_date_short(date_obj):
         1: "Oca", 2: "Şub", 3: "Mar", 4: "Nis", 5: "May", 6: "Haz",
         7: "Tem", 8: "Ağu", 9: "Eyl", 10: "Eki", 11: "Kas", 12: "Ara"
     }
-    return f"{date_obj.day} {months[date_obj.month]}"
+    return f"{date_obj.day} {months[date_obj.month]} {date_obj.year}"
 
 def parse_turkish_date(date_str):
     if isinstance(date_str, (pd.Timestamp, datetime)): return date_str
@@ -89,7 +89,7 @@ class KPICard(QFrame):
 class ProjectApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Proje Kontrol Merkezi v14.0 (Auto-Scale Gantt)")
+        self.setWindowTitle("Proje Kontrol Merkezi v15.0 (Final Gantt)")
         self.setGeometry(100, 100, 1600, 900)
         self.setStyleSheet(STYLE_SHEET)
         try: self.setWindowIcon(QIcon(resource_path("app_icon.ico")))
@@ -296,12 +296,6 @@ class ProjectApp(QMainWindow):
 
     def update_gantt(self, df):
         # 1. FILTRELEME
-        # Kriterler:
-        # - Özet = Evet (Sadece Özet Aktiviteler)
-        # - Bolluk_Num <= 30
-        # - Benzersiz_Kimlik != '1' (En üst proje başlığını hariç tut)
-        # - Fiili_Bitiş_Date BOŞ (Yani Tamamlanmamış olanlar)
-        
         if 'Özet' not in df.columns:
             self.web_gantt.setHtml("<h3>Veri hatası: 'Özet' sütunu bulunamadı.</h3>")
             return
@@ -314,26 +308,25 @@ class ProjectApp(QMainWindow):
         data = df[mask].copy()
         
         if data.empty:
-            self.web_gantt.setHtml("<h3>Kriterlere uygun (Tamamlanmamış, Özet, Kritik) aktivite bulunamadı.</h3><p>Filtre: Özet='Evet', Bolluk<=30, ID!=1, Fiili Bitiş=Yok</p>")
+            self.web_gantt.setHtml("<h3>Kriterlere uygun (Tamamlanmamış, Özet, Kritik) aktivite bulunamadı.</h3>")
             return
 
-        # Sıralama (Gantt için yukarıdan aşağıya doğru tarih sırası)
         data = data.sort_values('Başlangıç_Date', ascending=False)
         
-        # Süre hesaplamaları
+        # Süre hesaplamaları (Milisaniye cinsinden)
         data['Delta'] = data['Bitiş_Date'] - data['Başlangıç_Date']
+        data['Delta_ms'] = data['Delta'].dt.total_seconds() * 1000
         data['Tamamlanma_Yüzdesi'] = data['Tamamlanma_Yüzdesi'].fillna(0)
         
-        # Tamamlanan kısmın bitiş tarihi
         data['Progress_End'] = data['Başlangıç_Date'] + (data['Delta'] * data['Tamamlanma_Yüzdesi'])
+        data['Progress_ms'] = (data['Progress_End'] - data['Başlangıç_Date']).dt.total_seconds() * 1000
         
-        # Grafik
         fig = go.Figure()
 
-        # A) PLAN ÇUBUĞU (Arka Plan - Açık Gri - Gövde)
+        # A) PLAN ÇUBUĞU (GÖVDE)
         fig.add_trace(go.Bar(
             y=data['Ad'],
-            x=data['Delta'].dt.total_seconds() * 1000,
+            x=data['Delta_ms'],
             base=data['Başlangıç_Date'],
             orientation='h',
             marker=dict(color='#bdc3c7'),
@@ -342,77 +335,78 @@ class ProjectApp(QMainWindow):
             showlegend=False
         ))
         
-        # OK ŞEKLİ İÇİN ÜÇGEN BAŞLIK (Gri)
+        # B) OK UCU (Marker)
+        # Bitiş tarihine bir ok işareti koyuyoruz
         fig.add_trace(go.Scatter(
             y=data['Ad'],
             x=data['Bitiş_Date'],
             mode='markers',
-            marker=dict(symbol='triangle-right', size=15, color='#bdc3c7'),
+            marker=dict(symbol='triangle-right', size=20, color='#bdc3c7'),
             showlegend=False,
             hoverinfo='skip'
         ))
 
-        # B) İLERLEME ÇUBUĞU (Ön Plan - Koyu Renk)
-        progress_duration = (data['Progress_End'] - data['Başlangıç_Date']).dt.total_seconds() * 1000
+        # C) İLERLEME ÇUBUĞU
         fig.add_trace(go.Bar(
             y=data['Ad'],
-            x=progress_duration,
+            x=data['Progress_ms'],
             base=data['Başlangıç_Date'],
             orientation='h',
             marker=dict(color='#2c3e50'),
             text=(data['Tamamlanma_Yüzdesi'] * 100).astype(int).astype(str) + '%',
             textposition='inside',
             insidetextanchor='middle',
+            insidetextorientation='horizontal', # DİKİNE YAZIYI ENGELLEMEK İÇİN
             textfont=dict(color='white', weight='bold'),
             name='İlerleme',
             showlegend=False
         ))
 
-        # C) TARİH ETİKETLERİ
-        # Başlangıç Tarihi (Sol Tarafta)
+        # D) SOLA BAŞLANGIÇ TARİHİ
         fig.add_trace(go.Scatter(
             y=data['Ad'],
             x=data['Başlangıç_Date'],
             mode='text',
             text=data['Başlangıç_Date'].apply(format_date_short),
-            textposition='middle left', 
-            textfont=dict(color='#7f8c8d', size=11),
+            textposition='middle left',
+            textfont=dict(color='#2c3e50', size=11, weight='bold'),
             showlegend=False
         ))
         
-        # Bitiş Tarihi (Sağ Tarafta)
+        # E) SAĞA BİTİŞ TARİHİ
+        # Oku geçmesi için biraz sağa ofset veriyoruz (Görsel olarak)
         fig.add_trace(go.Scatter(
             y=data['Ad'],
             x=data['Bitiş_Date'],
             mode='text',
             text=data['Bitiş_Date'].apply(format_date_short),
-            textposition='middle right', 
-            textfont=dict(color='#7f8c8d', size=11),
+            textposition='middle right',
+            textfont=dict(color='#2c3e50', size=11, weight='bold'),
             showlegend=False
         ))
 
-        # D) LAYOUT AYARLARI
+        # LAYOUT AYARLARI
         today = pd.Timestamp.now()
         
-        # OTOMATİK ÖLÇEKLENDİRME İÇİN RANGE HESABI
+        # OTOMATİK ÖLÇEKLENDİRME ve TAMPON BÖLGE (Yazılar sığsın diye)
         start_min = data['Başlangıç_Date'].min()
         end_max = data['Bitiş_Date'].max()
         
-        # Biraz boşluk bırakalım (Padding)
-        total_span = end_max - start_min
-        buffer = total_span * 0.05
-        if buffer.days < 5: buffer = timedelta(days=5)
-        
-        xaxis_range = [start_min - buffer, end_max + buffer]
+        if pd.notna(start_min) and pd.notna(end_max):
+            span = end_max - start_min
+            buffer = max(timedelta(days=15), span * 0.1) # En az 15 gün veya %10 boşluk
+            x_range = [start_min - buffer, end_max + buffer]
+        else:
+            x_range = None
 
         fig.update_layout(
             barmode='overlay',
-            height=max(600, len(data)*40),
+            height=max(600, len(data)*50),
             xaxis=dict(
                 side='top',
-                tickformat="%Y-Q%q", # Yıl-Çeyrek formatı
-                # dtick="M3" -> KALDIRILDI (Otomatik ölçek için)
-                range=xaxis_range, # Veriye göre dinamik aralık
+                type='date', # EKSENİ ZORLA TARİH YAP
+                tickformat="%Y-Q%q", # Yıl ve Çeyrek (2025-Q1 gibi)
+                range=x_range,
                 gridcolor='#ecf0f1',
                 title=""
             ),
