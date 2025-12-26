@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
 from datetime import datetime
-import traceback # Hata takibi için
+# timedelta modülüne artık ihtiyacımız yok, Pandas'ınkini kullanacağız
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, 
                              QPushButton, QFileDialog, QLabel, QTabWidget, 
@@ -14,7 +14,7 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 
-# --- SİHİRLİ FONKSİYON (EXE İÇİN) ---
+# --- SİHİRLİ FONKSİYON ---
 def resource_path(relative_path):
     try: base_path = sys._MEIPASS
     except Exception: base_path = os.path.abspath(".")
@@ -34,12 +34,18 @@ STYLE_SHEET = """
 # --- YARDIMCI FONKSİYONLAR ---
 def format_month_year_tr(date_obj):
     if pd.isna(date_obj): return ""
-    months = {1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran", 7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"}
+    months = {
+        1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran",
+        7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"
+    }
     return f"{months[date_obj.month]} {date_obj.year}"
 
 def format_date_tr_full(date_obj):
     if pd.isna(date_obj): return "-"
-    months = {1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran", 7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"}
+    months = {
+        1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran",
+        7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"
+    }
     return f"{date_obj.day} {months[date_obj.month]} {date_obj.year}"
 
 def parse_turkish_date(date_str):
@@ -84,7 +90,7 @@ class KPICard(QFrame):
 class ProjectApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Proje Kontrol Merkezi v14.0 (Final Stable)")
+        self.setWindowTitle("Proje Kontrol Merkezi v13.0 (Fixed)")
         self.setGeometry(100, 100, 1600, 900)
         self.setStyleSheet(STYLE_SHEET)
         try: self.setWindowIcon(QIcon(resource_path("app_icon.ico")))
@@ -149,10 +155,7 @@ class ProjectApp(QMainWindow):
                 self.df_current = df
                 self.lbl_cur.setText(f"✅ {os.path.basename(path)}"); self.lbl_cur.setStyleSheet("color: #27ae60; font-weight: bold;")
             self.refresh_ui()
-        except Exception as e:
-            # Gelişmiş Hata Raporlama
-            err_msg = "".join(traceback.format_exception(None, e, e.__traceback__))
-            QMessageBox.critical(self, "Kritik Hata", f"Dosya işlenirken hata oluştu:\n\n{str(e)}\n\nDetay:\n{err_msg}")
+        except Exception as e: QMessageBox.critical(self, "Hata", str(e))
 
     def process_data(self, path):
         df = pd.read_csv(path) if path.endswith('.csv') else pd.read_excel(path)
@@ -163,20 +166,15 @@ class ProjectApp(QMainWindow):
              else: raise ValueError("Dosyada 'Benzersiz_Kimlik' sütunu bulunamadı!")
         
         df['Benzersiz_Kimlik'] = df['Benzersiz_Kimlik'].apply(normalize_id)
+        df['Başlangıç_Date'] = df['Başlangıç'].apply(parse_turkish_date)
+        df['Bitiş_Date'] = df['Bitiş'].apply(parse_turkish_date)
+        df['Fiili_Başlangıç_Date'] = df['Fiili_Başlangıç'].apply(parse_turkish_date)
+        df['Fiili_Bitiş_Date'] = df['Fiili_Bitiş'].apply(parse_turkish_date)
         
-        # Tarih Dönüşümleri (Güçlendirilmiş)
-        date_cols = ['Başlangıç', 'Bitiş', 'Fiili_Başlangıç', 'Fiili_Bitiş']
-        target_cols = ['Başlangıç_Date', 'Bitiş_Date', 'Fiili_Başlangıç_Date', 'Fiili_Bitiş_Date']
-        
-        for raw, target in zip(date_cols, target_cols):
-            if raw in df.columns:
-                df[target] = df[raw].apply(parse_turkish_date)
-            else:
-                df[target] = pd.NaT # Eğer kolon yoksa NaT ata
-
         df['Süre_Num'] = df['Süre'].apply(clean_duration)
         df['Bolluk_Num'] = df['Toplam_Bolluk'].apply(clean_duration)
         
+        # Kritiklik: Bolluk <= 0 ve Tamamlanmamış
         df['Kritik'] = (df['Bolluk_Num'] <= 0) & (pd.isna(df['Fiili_Bitiş_Date']))
         df['Durum'] = df.apply(lambda x: 'Kritik' if x['Kritik'] else ('Tamamlandı' if pd.notna(x['Fiili_Bitiş_Date']) else 'Normal'), axis=1)
         return df
@@ -189,8 +187,7 @@ class ProjectApp(QMainWindow):
             self.generate_insights(self.df_current, self.df_baseline)
             if self.df_baseline is not None: self.update_comparison(self.df_current, self.df_baseline)
         except Exception as e:
-            err_msg = "".join(traceback.format_exception(None, e, e.__traceback__))
-            QMessageBox.critical(self, "Arayüz Hatası", f"Ekran yenilenirken hata:\n{err_msg}")
+            QMessageBox.critical(self, "Arayüz Hatası", f"Hata: {str(e)}")
 
     def update_dashboard(self, df):
         while self.kpi_layout.count():
@@ -219,7 +216,9 @@ class ProjectApp(QMainWindow):
             gauge = {
                 'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
                 'bar': {'color': "#0078D7"},
-                'bgcolor': "white", 'borderwidth': 2, 'bordercolor': "gray",
+                'bgcolor': "white",
+                'borderwidth': 2,
+                'bordercolor': "gray",
                 'steps': [{'range': [0, 100], 'color': "#f4f7f6"}]
             }
         ), row=1, col=1)
@@ -227,8 +226,8 @@ class ProjectApp(QMainWindow):
         cnt = df['Durum'].value_counts()
         fig.add_trace(go.Pie(labels=cnt.index, values=cnt.values, hole=.5, marker_colors=['#e74c3c', '#3498db', '#2ecc71']), row=2, col=1)
 
-        # --- FİLTRELER (Özet Olmayan) ---
-        target_date = today + pd.Timedelta(days=7) # HATA ÇÖZÜMÜ: pd.Timedelta kullanıldı
+        # --- DÜZELTME: timedelta yerine pd.DateOffset ---
+        target_date = today + pd.DateOffset(days=7)
         has_summary_col = 'Özet' in df.columns
         
         # A. Başlaması Kritik
@@ -241,7 +240,6 @@ class ProjectApp(QMainWindow):
         if has_summary_col: mask_finish = mask_finish & (df['Özet'] == 'Hayır')
         finish_crit = df[mask_finish].sort_values('Bitiş_Date').head(10)
 
-        # Tablo 1
         if not start_crit.empty:
             tarihler = start_crit['Başlangıç_Date'].apply(format_date_tr_full)
             fig.add_trace(go.Table(
@@ -251,7 +249,6 @@ class ProjectApp(QMainWindow):
         else:
             fig.add_trace(go.Table(header=dict(values=["🟢 HAFTALIK BAŞLANGIÇ RİSKİ"], fill_color='#2c3e50', font=dict(color='white')), cells=dict(values=[["Riskli aktivite yok."]], fill_color='#ecf0f1', font=dict(color='black'))), row=1, col=2)
 
-        # Tablo 2
         if not finish_crit.empty:
             tarihler = finish_crit['Bitiş_Date'].apply(format_date_tr_full)
             fig.add_trace(go.Table(
