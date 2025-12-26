@@ -4,8 +4,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
-from datetime import datetime, timedelta
-import locale
+from datetime import datetime
+# timedelta'yı kaldırdık, yerine pd.DateOffset kullanacağız
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, 
                              QPushButton, QFileDialog, QLabel, QTabWidget, 
@@ -90,7 +90,7 @@ class KPICard(QFrame):
 class ProjectApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Proje Kontrol Merkezi v12.0 (Ultimate Timeline)")
+        self.setWindowTitle("Proje Kontrol Merkezi v13.0 (Fixed)")
         self.setGeometry(100, 100, 1600, 900)
         self.setStyleSheet(STYLE_SHEET)
         try: self.setWindowIcon(QIcon(resource_path("app_icon.ico")))
@@ -136,8 +136,6 @@ class ProjectApp(QMainWindow):
         self.web_comp = QWebEngineView(); self.web_comp.setHtml("<h3 style='font-family:Segoe UI; padding:20px; color:#7f8c8d'>Kıyaslama verilerini görmek için Baseline dosyasını yükleyiniz.</h3>")
         l2.addWidget(self.web_comp); self.tabs.addTab(self.comp_tab, "⚖️ Kıyas Tablosu")
 
-        # Gantt Sekmesi Kaldırıldı
-        
         self.web_time = QWebEngineView(); self.tabs.addTab(self.web_time, "⏳ Zaman Çizelgesi")
         
         self.txt_notes = QTextEdit(); self.txt_notes.setReadOnly(True)
@@ -184,7 +182,7 @@ class ProjectApp(QMainWindow):
         try:
             if self.df_current is None: return
             self.update_dashboard(self.df_current)
-            self.update_timeline(self.df_current) # Gantt yerine Timeline artık ana görsel
+            self.update_timeline(self.df_current)
             self.generate_insights(self.df_current, self.df_baseline)
             if self.df_baseline is not None: self.update_comparison(self.df_current, self.df_baseline)
         except Exception as e:
@@ -196,7 +194,14 @@ class ProjectApp(QMainWindow):
             if item.widget(): item.widget().deleteLater()
         
         today = pd.Timestamp.now(); start = df['Başlangıç_Date'].min(); finish = df['Bitiş_Date'].max()
-        total = (finish-start).days; elapsed = max(0, (today-start).days)
+        
+        # Hata önleme: NaT ile matematik yapma
+        if pd.isna(start) or pd.isna(finish):
+            total = 0; elapsed = 0
+        else:
+            total = (finish-start).days
+            elapsed = max(0, (today-start).days)
+            
         summ = df[df['Benzersiz_Kimlik']=="1"]
         prog = summ.iloc[0]['Tamamlanma_Yüzdesi']*100 if not summ.empty else df['Tamamlanma_Yüzdesi'].mean()*100
         
@@ -205,12 +210,10 @@ class ProjectApp(QMainWindow):
         self.kpi_layout.addWidget(KPICard("İlerleme", f"%{prog:.1f}", "#9C27B0"))
         self.kpi_layout.addStretch()
 
-        # DÜZEN: Sol Kolon (Gauge + Pie), Sağ Kolon (2 Tablo Alt Alta)
         fig = make_subplots(rows=2, cols=2, specs=[[{"type":"indicator"}, {"type":"table"}], 
                                                    [{"type":"domain"}, {"type":"table"}]], 
                             column_widths=[0.35, 0.65])
         
-        # 1. Gauge Chart (Sade, Kırmızı çizgisiz)
         fig.add_trace(go.Indicator(
             mode = "gauge+number", value = prog,
             gauge = {
@@ -219,29 +222,27 @@ class ProjectApp(QMainWindow):
                 'bgcolor': "white",
                 'borderwidth': 2,
                 'bordercolor': "gray",
-                'steps': [{'range': [0, 100], 'color': "#f4f7f6"}] # Hafif gri arka plan
+                'steps': [{'range': [0, 100], 'color': "#f4f7f6"}]
             }
         ), row=1, col=1)
         
-        # 2. Pie Chart
         cnt = df['Durum'].value_counts()
         fig.add_trace(go.Pie(labels=cnt.index, values=cnt.values, hole=.5, marker_colors=['#e74c3c', '#3498db', '#2ecc71']), row=2, col=1)
 
-        # --- TABLOLAR ---
-        target_date = today + timedelta(days=7)
+        # --- DÜZELTME: timedelta yerine pd.DateOffset ---
+        target_date = today + pd.DateOffset(days=7)
         has_summary_col = 'Özet' in df.columns
         
-        # A. Başlaması Kritik (Top 10)
+        # A. Başlaması Kritik
         mask_start = (pd.isna(df['Fiili_Başlangıç_Date'])) & (df['Başlangıç_Date'] <= target_date) & (df['Bolluk_Num'] <= 30)
         if has_summary_col: mask_start = mask_start & (df['Özet'] == 'Hayır')
         start_crit = df[mask_start].sort_values('Başlangıç_Date').head(10)
 
-        # B. Tamamlanması Kritik (Top 10)
+        # B. Tamamlanması Kritik
         mask_finish = (pd.isna(df['Fiili_Bitiş_Date'])) & (df['Bitiş_Date'] <= target_date) & (df['Bolluk_Num'] <= 30)
         if has_summary_col: mask_finish = mask_finish & (df['Özet'] == 'Hayır')
         finish_crit = df[mask_finish].sort_values('Bitiş_Date').head(10)
 
-        # Tablo Çizimi 1 (Başlama)
         if not start_crit.empty:
             tarihler = start_crit['Başlangıç_Date'].apply(format_date_tr_full)
             fig.add_trace(go.Table(
@@ -249,10 +250,8 @@ class ProjectApp(QMainWindow):
                 cells=dict(values=[start_crit['Ad'].str.slice(0,35), tarihler, start_crit['Bolluk_Num']], fill_color='#ecf0f1', font=dict(color='black'))
             ), row=1, col=2)
         else:
-            fig.add_trace(go.Table(header=dict(values=["🟢 HAFTALIK BAŞLANGIÇ RİSKİ"], fill_color='#2c3e50', font=dict(color='white')), 
-                                   cells=dict(values=[["Riskli aktivite yok."]], fill_color='#ecf0f1')), row=1, col=2)
+            fig.add_trace(go.Table(header=dict(values=["🟢 HAFTALIK BAŞLANGIÇ RİSKİ"], fill_color='#2c3e50', font=dict(color='white')), cells=dict(values=[["Riskli aktivite yok."]], fill_color='#ecf0f1')), row=1, col=2)
 
-        # Tablo Çizimi 2 (Bitiş)
         if not finish_crit.empty:
             tarihler = finish_crit['Bitiş_Date'].apply(format_date_tr_full)
             fig.add_trace(go.Table(
@@ -260,8 +259,7 @@ class ProjectApp(QMainWindow):
                 cells=dict(values=[finish_crit['Ad'].str.slice(0,35), tarihler, finish_crit['Bolluk_Num']], fill_color='#fdedec', font=dict(color='black'))
             ), row=2, col=2)
         else:
-            fig.add_trace(go.Table(header=dict(values=["🔴 HAFTALIK BİTİŞ RİSKİ"], fill_color='#c0392b', font=dict(color='white')), 
-                                   cells=dict(values=[["Riskli aktivite yok."]], fill_color='#fdedec')), row=2, col=2)
+            fig.add_trace(go.Table(header=dict(values=["🔴 HAFTALIK BİTİŞ RİSKİ"], fill_color='#c0392b', font=dict(color='white')), cells=dict(values=[["Riskli aktivite yok."]], fill_color='#fdedec')), row=2, col=2)
 
         fig.update_layout(margin=dict(l=10, r=10, t=30, b=10), font={'family':"Segoe UI"})
         self.web_dash.setHtml(fig.to_html(include_plotlyjs='cdn'))
@@ -272,15 +270,13 @@ class ProjectApp(QMainWindow):
         if 'Özet_cur' in merged.columns: merged = merged[merged['Özet_cur'] == 'Hayır']
         active_pool = merged[pd.isna(merged['Fiili_Bitiş_Date_cur'])]
 
-        # A. Başlaması Gecikenler
         start_delayed = active_pool[(active_pool['Başlangıç_Date_base'] < today) & (pd.isna(active_pool['Fiili_Başlangıç_Date_cur'])) & (active_pool['Başlangıç_Date_cur'] > active_pool['Başlangıç_Date_base'])]
-        # B. Bitmesi Gecikenler
         finish_delayed = active_pool[(active_pool['Bitiş_Date_base'] < today) & (active_pool['Bitiş_Date_cur'] > active_pool['Bitiş_Date_base'])]
-        # C. Süresi Kısılanlar
+        
         active_pool_copy = active_pool.copy()
         active_pool_copy['Süre_Fark'] = active_pool_copy['Süre_Num_base'] - active_pool_copy['Süre_Num_cur']
         compressed = active_pool_copy[active_pool_copy['Süre_Fark'] > 0]
-        # D. Kritikliği Artanlar
+        
         active_pool_copy['Bolluk_Fark'] = active_pool_copy['Bolluk_Num_base'] - active_pool_copy['Bolluk_Num_cur']
         worsening = active_pool_copy[(active_pool_copy['Bolluk_Fark'] > 0) & (active_pool_copy['Bolluk_Num_cur'] <= 30)]
 
@@ -304,105 +300,40 @@ class ProjectApp(QMainWindow):
         self.web_comp.setHtml(fig.to_html(include_plotlyjs='cdn'))
 
     def update_timeline(self, df):
-        # 1. VERİ HAZIRLIĞI (Özet Aktiviteler Üzerinden)
-        # Genellikle Timeline'da çok fazla detay boğucu olur, varsa Özet=Evet olanları alalım
-        if 'Özet' in df.columns:
-            data = df[df['Özet'] == 'Evet'].copy()
-        else:
-            data = df.head(30).copy() # Yoksa ilk 30 iş
+        if 'Özet' in df.columns: data = df[df['Özet'] == 'Evet'].copy()
+        else: data = df.head(30).copy()
         
         if data.empty: 
             self.web_time.setHtml("<h3>Timeline için uygun veri bulunamadı.</h3>")
             return
         
-        # Sıralama: Başlangıç tarihine göre
-        data = data.sort_values('Başlangıç_Date', ascending=False) # Tersten sırala ki grafikte üstte çıksın
-
+        data = data.sort_values('Başlangıç_Date', ascending=False)
         fig = go.Figure()
 
         for idx, row in data.iterrows():
             if pd.isna(row['Başlangıç_Date']) or pd.isna(row['Bitiş_Date']): continue
-            
             start = row['Başlangıç_Date']
             finish = row['Bitiş_Date']
             duration_days = (finish - start).days
-            if duration_days <= 0: duration_days = 1 # Minimum görünürlük
-            
-            # İlerleme (Progress)
-            pct = row['Tamamlanma_Yüzdesi'] # 0.0 - 1.0 arası
+            if duration_days <= 0: duration_days = 1
+            pct = row['Tamamlanma_Yüzdesi']
             done_days = duration_days * pct
             
-            # 1. Ana Çubuk (Açık Renk - Kalan Kısım)
-            fig.add_trace(go.Bar(
-                y=[row['Ad']], 
-                x=[duration_days], 
-                base=[start], 
-                orientation='h',
-                marker=dict(color='#e0e0e0', line=dict(color='#2c3e50', width=1)),
-                hoverinfo='text',
-                hovertext=f"{row['Ad']}<br>Baş: {format_date_tr_full(start)}<br>Bit: {format_date_tr_full(finish)}<br>İlerleme: %{int(pct*100)}",
-                showlegend=False
-            ))
-
-            # 2. İlerleme Çubuğu (Koyu Renk - Yapılan Kısım)
+            fig.add_trace(go.Bar(y=[row['Ad']], x=[duration_days], base=[start], orientation='h', marker=dict(color='#e0e0e0', line=dict(color='#2c3e50', width=1)), hoverinfo='text', hovertext=f"{row['Ad']}<br>Baş: {format_date_tr_full(start)}<br>Bit: {format_date_tr_full(finish)}<br>İlerleme: %{int(pct*100)}", showlegend=False))
             if pct > 0:
-                fig.add_trace(go.Bar(
-                    y=[row['Ad']],
-                    x=[done_days],
-                    base=[start],
-                    orientation='h',
-                    marker=dict(color='#2c3e50', line=dict(width=0)), # Koyu Lacivert
-                    hoverinfo='skip',
-                    showlegend=False
-                ))
+                fig.add_trace(go.Bar(y=[row['Ad']], x=[done_days], base=[start], orientation='h', marker=dict(color='#2c3e50', line=dict(width=0)), hoverinfo='skip', showlegend=False))
 
-            # 3. Etiketler (Sol: Başlangıç Ay-Yıl, Sağ: Bitiş Ay-Yıl)
-            # Sol Etiket
-            fig.add_annotation(
-                x=start, y=row['Ad'], text=format_month_year_tr(start),
-                showarrow=False, xanchor='right', xshift=-10,
-                font=dict(size=10, color='#7f8c8d')
-            )
-            # Sağ Etiket
-            fig.add_annotation(
-                x=finish, y=row['Ad'], text=format_month_year_tr(finish),
-                showarrow=False, xanchor='left', xshift=10,
-                font=dict(size=10, color='#7f8c8d')
-            )
+            fig.add_annotation(x=start, y=row['Ad'], text=format_month_year_tr(start), showarrow=False, xanchor='right', xshift=-10, font=dict(size=10, color='#7f8c8d'))
+            fig.add_annotation(x=finish, y=row['Ad'], text=format_month_year_tr(finish), showarrow=False, xanchor='left', xshift=10, font=dict(size=10, color='#7f8c8d'))
 
-        # BUGÜN TARİHİNİ BOYAMA
         today = pd.Timestamp.now()
         min_date = data['Başlangıç_Date'].min()
+        if pd.notna(min_date):
+            # --- DÜZELTME: timedelta yerine pd.DateOffset ---
+            fig.add_shape(type="rect", xref="x", yref="paper", x0=min_date - pd.DateOffset(days=30), y0=0, x1=today, y1=1, fillcolor="lightgray", opacity=0.2, layer="below", line_width=0)
         
-        # Geçmiş zamanı boya (Gri Alan)
-        fig.add_shape(
-            type="rect",
-            xref="x", yref="paper",
-            x0=min_date - timedelta(days=30), # Biraz geriden başlat
-            y0=0, x1=today, y1=1,
-            fillcolor="lightgray", opacity=0.2, layer="below", line_width=0,
-        )
-        
-        # Bugün Çizgisi
         fig.add_vline(x=today, line_width=2, line_dash="dash", line_color="red", annotation_text="Bugün")
-
-        # X Ekseni Ayarları (Yıl ve Çeyrek)
-        fig.update_layout(
-            xaxis=dict(
-                type='date',
-                tickformat="%Y Q%q", # 2025 Q1 formatı
-                dtick="M3", # 3 Ayda bir (Çeyrek)
-                gridcolor='white'
-            ),
-            yaxis=dict(
-                showgrid=False
-            ),
-            plot_bgcolor='white',
-            height=800,
-            margin=dict(l=200, r=100, t=50, b=50), # Solda isimler için boşluk
-            font=dict(family="Segoe UI")
-        )
-
+        fig.update_layout(xaxis=dict(type='date', tickformat="%Y Q%q", dtick="M3", gridcolor='white'), yaxis=dict(showgrid=False), plot_bgcolor='white', height=800, margin=dict(l=200, r=100, t=50, b=50), font=dict(family="Segoe UI"))
         self.web_time.setHtml(fig.to_html(include_plotlyjs='cdn'))
 
     def generate_insights(self, df_curr, df_base=None):
@@ -420,62 +351,54 @@ class ProjectApp(QMainWindow):
         </style></head><body>
         """
         html += "<h2>🤖 Proje Analiz Raporu</h2>"
-        
-        # Filtre: Özet olmayanlar
         tasks_curr = df_curr[df_curr['Özet'] == 'Hayır'] if 'Özet' in df_curr.columns else df_curr
 
-        # 1. KRİTİK HAT ANALİZİ
         crit_active = tasks_curr[tasks_curr['Kritik'] == True]
-        html += "<div class='category cat-critical'>"
-        html += "<h3>🔥 Kritik Hat Analizi</h3>"
-        if crit_active.empty:
-            html += "<p>Projede şu an kritik hat üzerinde aktif (tamamlanmamış) bir aktivite bulunmamaktadır. Bu durum projenin zamanında bitmesi açısından olumludur.</p>"
+        html += "<div class='category cat-critical'><h3>🔥 Kritik Hat Analizi</h3>"
+        if crit_active.empty: html += "<p>Projede şu an kritik hat üzerinde aktif (tamamlanmamış) bir aktivite bulunmamaktadır.</p>"
         else:
             count = len(crit_active)
             html += f"<p>Proje genelinde bitiş tarihini doğrudan etkileyen <b>{count} adet</b> aktif kritik aktivite bulunmaktadır.</p>"
             for _, row in crit_active.sort_values('Başlangıç_Date').head(3).iterrows():
                 tarih = format_date_tr_full(row['Bitiş_Date'])
-                html += f"<p>➡ <b>{row['Ad']}</b> aktivitesi şu an kritik yoldadır. Bu aktivitenin {tarih} tarihinde tamamlanamaması durumunda, projenin bitiş tarihi doğrudan etkilenecek ve gecikme riski doğacaktır.</p>"
+                html += f"<p>➡ <b>{row['Ad']}</b> aktivitesi şu an kritik yoldadır ve {tarih} tarihinde bitmesi planlanmaktadır.</p>"
         html += "</div>"
 
-        # 2. GECİKME ANALİZİ
         today = pd.Timestamp.now()
         delayed = tasks_curr[(tasks_curr['Bitiş_Date'] < today) & (pd.isna(tasks_curr['Fiili_Bitiş_Date']))]
-        
         if not delayed.empty:
-            html += "<div class='category cat-delay'>"
-            html += "<h3>🚫 Mevcut Gecikmeler</h3>"
+            html += "<div class='category cat-delay'><h3>🚫 Mevcut Gecikmeler</h3>"
             html += f"<p>Planlanan bitiş tarihi geçmiş olmasına rağmen henüz tamamlanmamış <b>{len(delayed)}</b> aktivite tespit edilmiştir.</p>"
             for _, row in delayed.head(3).iterrows():
                 delay = (today - row['Bitiş_Date']).days
-                html += f"<p>➡ <b>{row['Ad']}</b> aktivitesinin {delay} gün önce bitmesi gerekiyordu. Bu gecikme, kendisine bağlı ardıl aktivitelerin başlamasını engelleyerek zincirleme bir gecikmeye yol açabilir.</p>"
+                html += f"<p>➡ <b>{row['Ad']}</b> aktivitesinin {delay} gün önce bitmesi gerekiyordu.</p>"
             html += "</div>"
 
-        # 3. KIYASLAMA ANALİZİ
         if df_base is not None:
-            html += "<div class='category cat-compare'>"
-            html += "<h3>⚖️ Baseline Karşılaştırma Analizi</h3>"
-            
+            html += "<div class='category cat-compare'><h3>⚖️ Baseline Karşılaştırma Analizi</h3>"
             merged = pd.merge(df_curr, df_base, on="Benzersiz_Kimlik", how="inner", suffixes=('_cur', '_base'))
             if 'Özet_cur' in merged.columns: merged = merged[merged['Özet_cur'] == 'Hayır']
-
+            
             merged['Süre_Fark'] = merged['Süre_Num_base'] - merged['Süre_Num_cur']
             merged['Bolluk_Fark'] = merged['Bolluk_Num_base'] - merged['Bolluk_Num_cur']
-            
             active_pool = merged[pd.isna(merged['Fiili_Bitiş_Date_cur'])]
 
-            # a) Kritikleşenler
             newly_critical = active_pool[(active_pool['Bolluk_Num_base'] > 0) & (active_pool['Bolluk_Num_cur'] <= 0)]
             if not newly_critical.empty:
                 for _, row in newly_critical.head(3).iterrows():
-                    html += f"<p>⚠️ <b>{row['Ad_cur']}</b> aktivitesi bir önceki iş programında kritik değilken, güncel programda kritik hale gelmiştir. Bu aktivite üzerindeki risk artmıştır ve yakından takip edilmelidir.</p>"
+                    html += f"<p>⚠️ <b>{row['Ad_cur']}</b> aktivitesi önceki planda kritik değilken, şu an kritik yola girmiştir.</p>"
             
-            # b) Süresi Kısılanlar
             compressed = active_pool[active_pool['Süre_Fark'] > 0]
             if not compressed.empty:
                 for _, row in compressed.head(3).iterrows():
-                    html += f"<p>⚡ <b>{row['Ad_cur']}</b> aktivitesinin süresi, önceki plana göre <b>{int(row['Süre_Fark'])} gün</b> kısaltılmıştır. Bu durum, önceki gecikmeleri telafi etmek amacıyla yapılan bir sıkıştırma (crashing) hamlesi olabilir.</p>"
-
+                    html += f"<p>⚡ <b>{row['Ad_cur']}</b> aktivitesinin süresi <b>{int(row['Süre_Fark'])} gün</b> kısaltılmıştır.</p>"
+            
+            start_delayed = active_pool[(active_pool['Başlangıç_Date_base'] < today) & (pd.isna(active_pool['Fiili_Başlangıç_Date_cur'])) & (active_pool['Başlangıç_Date_cur'] > active_pool['Başlangıç_Date_base'])]
+            if not start_delayed.empty:
+                row = start_delayed.iloc[0]
+                t1 = format_date_tr_full(row['Başlangıç_Date_base'])
+                t2 = format_date_tr_full(row['Başlangıç_Date_cur'])
+                html += f"<p>📉 <b>{row['Ad_cur']}</b> aktivitesinin başlaması gerekiyordu ({t1}) ancak güncel planda {t2} tarihine ötelenmiştir.</p>"
             html += "</div>"
 
         html += "</body></html>"
