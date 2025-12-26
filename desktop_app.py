@@ -81,7 +81,7 @@ class KPICard(QFrame):
 class ProjectApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Proje Kontrol Merkezi v11.0 (Advanced Filters)")
+        self.setWindowTitle("Proje Kontrol Merkezi v11.1 (ID & Updates)")
         self.setGeometry(100, 100, 1600, 900)
         self.setStyleSheet(STYLE_SHEET)
         try: self.setWindowIcon(QIcon(resource_path("app_icon.ico")))
@@ -197,53 +197,54 @@ class ProjectApp(QMainWindow):
         self.kpi_layout.addWidget(KPICard("İlerleme", f"%{prog:.1f}", "#9C27B0"))
         self.kpi_layout.addStretch()
 
-        fig = make_subplots(rows=2, cols=2, specs=[[{"type":"indicator"}, {"type":"table", "rowspan":2}], [{"type":"domain"}, None]], column_widths=[0.4, 0.6])
+        # SUBPLOTS TITLE EKLENDI
+        fig = make_subplots(
+            rows=2, cols=2, 
+            specs=[[{"type":"indicator"}, {"type":"table", "rowspan":2}], [{"type":"domain"}, None]], 
+            column_widths=[0.4, 0.6],
+            subplot_titles=("", "Önümüzdeki 1 Hafta içerisinde başlaması ve/veya bitmesi planlanan kritik aktiviteler")
+        )
+
         t_prog = min(100, (elapsed/total)*100) if total>0 else 0
         fig.add_trace(go.Indicator(mode="gauge+number+delta", value=prog, delta={'reference': t_prog}, gauge={'axis':{'range':[None,100]}, 'bar':{'color':"#0078D7"}, 'threshold':{'line':{'color':'red','width':4}, 'value':t_prog}}), row=1, col=1)
         
         # --- TABLO FILTRELERI (Özet Olmayanlar) ---
         target_date = today + timedelta(days=7)
-        # Özet olmayanlar: Genellikle Özet="Hayır".
-        # Dosyada Özet sütunu var mı?
         has_summary_col = 'Özet' in df.columns
         
-        # 1. Başlaması Kritik Olanlar (Bugün ile Bugün+7 arasında)
-        # Filtre: Özet=Hayır, Fiili Başlangıç=Yok, Planlanan Başlangıç < Bugün+7, Bolluk <= 30
+        # 1. Başlaması Kritik Olanlar
         mask_start = (pd.isna(df['Fiili_Başlangıç_Date'])) & \
                      (df['Başlangıç_Date'] <= target_date) & \
                      (df['Bolluk_Num'] <= 30)
         
         if has_summary_col: mask_start = mask_start & (df['Özet'] == 'Hayır')
-        
         start_crit = df[mask_start].sort_values('Başlangıç_Date').head(10)
 
         # 2. Tamamlanması Kritik Olanlar
-        # Filtre: Özet=Hayır, Fiili Bitiş=Yok, Planlanan Bitiş < Bugün+7, Bolluk <= 30
         mask_finish = (pd.isna(df['Fiili_Bitiş_Date'])) & \
                       (df['Bitiş_Date'] <= target_date) & \
                       (df['Bolluk_Num'] <= 30)
         
         if has_summary_col: mask_finish = mask_finish & (df['Özet'] == 'Hayır')
-        
         finish_crit = df[mask_finish].sort_values('Bitiş_Date').head(10)
 
-        # Tek Tabloda Birleştirme (Kategori ekleyerek)
-        start_crit['Kategori'] = "🟢 BAŞLANGIÇ RİSKİ"
+        # ISIMLER VE KOLONLAR GUNCELLENDI
+        start_crit['Kategori'] = "🟢 BAŞLAMASI PLANLANAN"
         start_crit['Tarih_Gosterim'] = start_crit['Başlangıç_Date']
         
-        finish_crit['Kategori'] = "🔴 BİTİŞ RİSKİ"
+        finish_crit['Kategori'] = "🔴 BİTMESİ PLANLANAN"
         finish_crit['Tarih_Gosterim'] = finish_crit['Bitiş_Date']
 
         comb = pd.concat([start_crit, finish_crit])
 
         if not comb.empty:
-            # Tarih Formatlama
             tarihler = comb['Tarih_Gosterim'].apply(format_date_tr)
             
+            # Aktivite ID KOLONU EKLENDI
             fig.add_trace(go.Table(
-                header=dict(values=["Risk Türü", "Aktivite Adı", "Kritik Tarih", "Bolluk"], 
+                header=dict(values=["Aktivite ID", "Risk Türü", "Aktivite Adı", "Kritik Tarih", "Bolluk"], 
                             fill_color='#2c3e50', font=dict(color='white')), 
-                cells=dict(values=[comb['Kategori'], comb['Ad'].str.slice(0,40), tarihler, comb['Bolluk_Num']], 
+                cells=dict(values=[comb['Benzersiz_Kimlik'], comb['Kategori'], comb['Ad'].str.slice(0,40), tarihler, comb['Bolluk_Num']], 
                            fill_color='#ecf0f1', font=dict(color='black'))
             ), row=1, col=2)
         else:
@@ -258,15 +259,12 @@ class ProjectApp(QMainWindow):
         merged = pd.merge(df_c, df_b, on="Benzersiz_Kimlik", how="inner", suffixes=('_cur', '_base'))
         today = pd.Timestamp.now()
 
-        # Özet Filtresi (Varsa)
         if 'Özet_cur' in merged.columns:
             merged = merged[merged['Özet_cur'] == 'Hayır']
 
-        # Ortak Havuz: Sadece Güncelde HENÜZ BİTMEMİŞ işleri al
         active_pool = merged[pd.isna(merged['Fiili_Bitiş_Date_cur'])]
 
         # A. Başlaması Gecikenler
-        # Baseline Plan < Bugün VE Fiili Başlangıç YOK VE Güncel Plan > Baseline Plan + Bolluk<=30
         start_delayed = active_pool[
             (active_pool['Başlangıç_Date_base'] < today) & 
             (pd.isna(active_pool['Fiili_Başlangıç_Date_cur'])) &
@@ -275,7 +273,6 @@ class ProjectApp(QMainWindow):
         ]
         
         # B. Bitmesi Gecikenler
-        # Baseline Plan < Bugün VE Fiili Bitiş YOK (zaten havuzda yok) VE Güncel Plan > Baseline Plan + Bolluk<=30
         finish_delayed = active_pool[
             (active_pool['Bitiş_Date_base'] < today) &
             (active_pool['Bitiş_Date_cur'] > active_pool['Bitiş_Date_base']) &
@@ -283,7 +280,6 @@ class ProjectApp(QMainWindow):
         ]
 
         # C. Süresi Kısılanlar
-        # Süre_base - Süre_cur > 0
         active_pool_copy = active_pool.copy()
         active_pool_copy['Süre_Fark'] = active_pool_copy['Süre_Num_base'] - active_pool_copy['Süre_Num_cur']
         compressed = active_pool_copy[
@@ -292,14 +288,12 @@ class ProjectApp(QMainWindow):
         ]
 
         # D. Kritikliği Artanlar
-        # Bolluk azalmış VE Güncel Bolluk <= 30
         active_pool_copy['Bolluk_Fark'] = active_pool_copy['Bolluk_Num_base'] - active_pool_copy['Bolluk_Num_cur']
         worsening = active_pool_copy[
             (active_pool_copy['Bolluk_Fark'] > 0) & 
             (active_pool_copy['Bolluk_Num_cur'] <= 30)
         ]
 
-        # GRAFİKLER
         fig = make_subplots(rows=2, cols=2, 
             subplot_titles=("Başlaması Gecikenler (Bolluk<=30)", "Bitmesi Gecikenler (Bolluk<=30)", 
                             "Süresi Kısılanlar (Bolluk<=30)", "Kritikliği Artanlar (Bolluk<=30)"), 
@@ -310,13 +304,13 @@ class ProjectApp(QMainWindow):
                 fig.add_trace(go.Table(header=dict(values=["Durum"], fill_color='#34495e', font=dict(color='white')), cells=dict(values=[["Kriterlere uygun veri yok"]], fill_color='#ecf0f1', font=dict(color='black'))), row=row, col=col)
             else:
                 top = data.head(10)
-                # Tarihleri formatla
                 v1 = top[col1].apply(format_date_tr) if 'Date' in col1 else top[col1]
                 v2 = top[col2].apply(format_date_tr) if 'Date' in col2 else top[col2]
 
+                # Aktivite ID EKLENDI
                 fig.add_trace(go.Table(
-                    header=dict(values=["Aktivite", header1, header2, "Bolluk"], fill_color='#34495e', font=dict(color='white')),
-                    cells=dict(values=[top['Ad_cur'].str.slice(0, 30), v1, v2, top['Bolluk_Num_cur']], fill_color='#ecf0f1', font=dict(color='black'))
+                    header=dict(values=["Aktivite ID", "Aktivite", header1, header2, "Bolluk"], fill_color='#34495e', font=dict(color='white')),
+                    cells=dict(values=[top['Benzersiz_Kimlik'], top['Ad_cur'].str.slice(0, 30), v1, v2, top['Bolluk_Num_cur']], fill_color='#ecf0f1', font=dict(color='black'))
                 ), row=row, col=col)
 
         add_comp_table(start_delayed, 'Başlangıç_Date_base', 'Base Başlangıç', 'Başlangıç_Date_cur', 'Güncel Başlangıç', 1, 1)
