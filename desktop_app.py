@@ -90,7 +90,7 @@ class KPICard(QFrame):
 class ProjectApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Proje Kontrol Merkezi v12.0 (Gantt Pro)")
+        self.setWindowTitle("Proje Kontrol Merkezi v12.1 (Gantt Fix)")
         self.setGeometry(100, 100, 1600, 900)
         self.setStyleSheet(STYLE_SHEET)
         try: self.setWindowIcon(QIcon(resource_path("app_icon.ico")))
@@ -296,18 +296,21 @@ class ProjectApp(QMainWindow):
         self.web_comp.setHtml(fig.to_html(include_plotlyjs='cdn'))
 
     def update_gantt(self, df):
-        # 1. VERİ HAZIRLIĞI
-        # "En özet aktiviteye yer verme" -> Genellikle ID 1'i (Proje başlığı) çıkartırız.
-        # Ayrıca sadece Özet Aktiviteleri (Grup başlıklarını) ve Kritik olanları alıyoruz
-        # Not: Eğer detay aktiviteleri de görmek istersen (df['Özet']=='Evet') kısmını kaldırabilirsin.
-        data = df[(df['Özet']=='Evet') & (df['Kritik']==True) & (df['Benzersiz_Kimlik'] != '1')].copy()
-        
+        # DUZELTME: Sadece Detay Aktiviteleri Göster (Özet = Hayır)
+        # Eğer dosyanızda 'Özet' sütunu yoksa veya hepsi 'Hayır' ise çalışmaya devam eder.
+        # Kritik == True olan detay işleri al.
+        if 'Özet' in df.columns:
+            data = df[(df['Özet']=='Hayır') & (df['Kritik']==True)].copy()
+        else:
+            data = df[df['Kritik']==True].copy()
+            
         if data.empty: 
-            self.web_gantt.setHtml("<h3>Kritik hat üzerinde görüntülenecek veri yok.</h3>")
+            self.web_gantt.setHtml("<h3>Kritik hat üzerinde görüntülenecek DETAY aktivite bulunamadı.</h3><p>Filtre kriteri: Özet='Hayır' VE Kritik=True</p>")
             return
 
-        # Süre hesaplamaları (Milisaniye cinsinden bar genişliği için)
+        # Veri Hazırlığı
         data['Delta'] = data['Bitiş_Date'] - data['Başlangıç_Date']
+        data['Tamamlanma_Yüzdesi'] = data['Tamamlanma_Yüzdesi'].fillna(0) # NaN ise 0 yap
         
         # Tamamlanan kısmın bitiş tarihi
         data['Progress_End'] = data['Başlangıç_Date'] + (data['Delta'] * data['Tamamlanma_Yüzdesi'])
@@ -373,7 +376,7 @@ class ProjectApp(QMainWindow):
         
         fig.update_layout(
             barmode='overlay', # Çubukların üst üste binmesi için
-            height=600,
+            height=max(600, len(data)*30), # Dinamik yükseklik
             xaxis=dict(
                 side='top', # Tarihler üstte
                 tickformat="%Y-Ç%q", # 2024-Ç1 formatı
@@ -388,7 +391,7 @@ class ProjectApp(QMainWindow):
             margin=dict(l=10, r=10, t=50, b=10),
             font=dict(family="Segoe UI"),
             shapes=[
-                # Bugün çizgisi (Dikey Kırmızı Kesikli)
+                # Bugün çizgisi
                 dict(
                     type="line",
                     x0=today, x1=today,
